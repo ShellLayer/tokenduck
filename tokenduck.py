@@ -37,8 +37,9 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
+from hover_cards import QuotaHover, reset_caption
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -1439,6 +1440,7 @@ class TokenDuck:
         self.last_refresh = None
         self.width = 120
         self._tip = None
+        self._tip_show_job = self._tip_hide_job = self._tip_refresh_job = None
         self.screen_x = 0
         self.screen_y = 0
         self.tb_h = 48                # 最近一次探测到的任务栏高（anchor 里更新）
@@ -1528,8 +1530,8 @@ class TokenDuck:
 
         self.canvas.bind("<Button-1>", self.on_left_click)
         self.canvas.bind("<ButtonRelease-3>", self.show_menu)  # 松开才弹，避免同一次点击的释放误选菜单项
-        self.canvas.bind("<Enter>", lambda e: self.show_tip())
-        self.canvas.bind("<Leave>", lambda e: self.hide_tip())
+        self.canvas.bind("<Enter>", lambda e: self.schedule_tip())
+        self.canvas.bind("<Leave>", lambda e: self.schedule_tip_hide())
 
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.add_command(label="立即刷新", command=self.refresh_now)
@@ -1694,99 +1696,70 @@ class TokenDuck:
                      self.zcode_error, zcode_rem, zcode_reset))
         return rows
 
-    def tip_text(self):
-        lines = []
-        if self.error:
-            lines.append("codex 获取失败：" + self.error)
-        if self.data:
-            plan = self.data.get("plan_type") or "?"
-            lines.append("codex plan: %s" % plan)
-            rl = self.data.get("rate_limit") or {}
-            for w in (rl.get("primary_window"), rl.get("secondary_window")):
-                if not w:
-                    continue
-                name = "5h" if window_tag(w) == "5h" else "周"
-                reset = ""
-                if w.get("reset_at"):
-                    reset = datetime.fromtimestamp(w["reset_at"]).strftime("，重置于 %m-%d %H:%M")
-                lines.append("codex %s窗口：已用 %s%%%s" % (name, w.get("used_percent", "?"), reset))
-            credits = self.data.get("credits") or {}
-            if credits.get("has_credits"):
-                lines.append("codex credits 余额：%s" % credits.get("balance", "?"))
-            if rl.get("limit_reached"):
-                lines.append("codex 已达速率上限！")
-        if self.kimi_error:
-            lines.append("kimi 获取失败：" + self.kimi_error)
-        if self.kimi_data:
-            kd = self.kimi_data
-            if kd.get("level"):
-                lines.append("kimi 会员: %s" % kd["level"])
-            for w in kd.get("windows") or []:
-                reset = ""
-                if w.get("reset_at"):
-                    reset = datetime.fromtimestamp(w["reset_at"]).strftime("，重置于 %m-%d %H:%M")
-                name = "周" if w["tag"] == "w" else w["tag"]
-                lines.append("kimi %s窗口：已用 %d%%%s"
-                             % (name, w["used_percent"], reset))
-            if kd.get("used_ratio") is not None:
-                line = "kimi 月总额度：已用 %d%%" % round(kd["used_ratio"] * 100)
-                if kd.get("amount") and kd.get("amount_left") is not None:
-                    line += "（剩余 %s/%s）" % (_fmt_amount(kd["amount_left"]),
-                                                 _fmt_amount(kd["amount"]))
-                if kd.get("reset_at"):
-                    line += datetime.fromtimestamp(kd["reset_at"]).strftime(
-                        "，重置于 %m-%d %H:%M")
-                lines.append(line)
-                if kd.get("code_used_ratio"):
-                    lines.append("其中 Kimi Code 已用总额度的 %d%%"
-                                 % round(kd["code_used_ratio"] * 100))
-                if kd["used_ratio"] >= 1:
-                    lines.append("kimi 月总额度已用尽！")
-        if self.zcode_error:
-            lines.append("zcode 获取失败：" + self.zcode_error)
-        if self.zcode_data:
-            zd = self.zcode_data
-            if zd.get("plan_name"):
-                lines.append("zcode 订阅: %s" % zd["plan_name"])
-            elif zd.get("level"):
-                lines.append("zcode 会员: %s" % zd["level"])
-            for w in zd.get("windows") or []:
-                name = {"w": "周窗口", "月": "月总额度"}.get(w["tag"], "%s 窗口" % w["tag"])
-                reset = ""
-                if w.get("reset_at"):
-                    reset = datetime.fromtimestamp(w["reset_at"]).strftime("，重置于 %m-%d %H:%M")
-                line = "zcode %s：剩余 %s%%" % (name, _remain(w.get("used_percent")))
-                if w.get("amount") and w.get("amount_left") is not None:
-                    line += "（剩 %s/%s）" % (_fmt_amount(w["amount_left"]),
-                                               _fmt_amount(w["amount"]))
-                lines.append(line + reset)
-                if w.get("used_percent", 0) >= 100:
-                    lines.append("zcode %s已用尽！" % name)
-            if not (zd.get("windows")):
-                pct = zd.get("used_percent")
-                if pct is not None:
-                    line = "zcode 月总额度：已用 %d%%" % pct
-                    if zd.get("remaining") is not None and zd.get("limit") is not None:
-                        line += "（剩余 %s/%s）" % (_fmt_amount(zd["remaining"]),
-                                                     _fmt_amount(zd["limit"]))
-                    lines.append(line)
-            if zd.get("until"):
-                lines.append("zcode 订阅到期：" + datetime.fromtimestamp(
-                    zd["until"]).strftime("%Y-%m-%d %H:%M"))
-        for name, data, error in (("codex", self.data, self.error),
-                                  ("kimi", self.kimi_data, self.kimi_error),
-                                  ("zcode", self.zcode_data, self.zcode_error)):
-            saved_at = self.last_success.get(name)
+    def hover_sections(self, now=None):
+        """只提取卡片需要的显示字段，不复制登录数据。"""
+        now = time.time() if now is None else now
+        sections = []
+        for provider, title, color, data, error in (
+                ("codex", "Codex", "#3ba55d", self.data, self.error),
+                ("kimi", "Kimi", "#4a8ee8", self.kimi_data, self.kimi_error),
+                ("zcode", "ZCode", "#9670dc", self.zcode_data, self.zcode_error)):
+            data = data or {}
+            windows = _display_windows(provider, data)
+            monthly = _num(data.get("used_ratio")) if provider == "kimi" else None
+            extra_month = monthly is not None and not any(w["tag"] == "月" for w in windows)
+            plan = (data.get("plan_type") if provider == "codex" else data.get("level")
+                    if provider == "kimi" else data.get("plan_name") or data.get("level")) or ""
+            if provider == "codex" and plan:
+                plan = "ChatGPT " + str(plan).replace("_", " ").title()
+            rows, notes = [], []
+            if extra_month:
+                summary = "月总额度剩余 %d%%" % _remain(monthly * 100)
+                amount, left = _num(data.get("amount")), _num(data.get("amount_left"))
+                if amount is not None and amount > 0 and left is not None:
+                    summary += " · %s / %s" % (_fmt_amount(left), _fmt_amount(amount))
+                notes.append(summary)
+                monthly_reset = _num(data.get("reset_at"))
+                if monthly_reset is not None:
+                    notes.append("月额度：" + reset_caption(monthly_reset, now))
+            for win in windows:
+                row = {"label": {"5h": "5 小时额度", "w": "每周额度", "月": "月总额度"}.get(
+                           win["tag"], str(win["tag"]) + "额度"),
+                       "remaining": _remain(win["used_percent"]), "reset": reset_caption(win.get("reset_at"), now)}
+                amount, left = _num(win.get("amount")), _num(win.get("amount_left"))
+                if win["tag"] == "月":
+                    if provider == "kimi":
+                        amount, left = _num(data.get("amount")), _num(data.get("amount_left"))
+                    elif provider == "zcode" and amount is None:
+                        amount, left = _num(data.get("limit")), _num(data.get("remaining"))
+                if amount is not None and amount > 0 and left is not None:
+                    row["detail"] = "剩余 %s / %s" % (_fmt_amount(left), _fmt_amount(amount))
+                rows.append(row)
+            credits = (data.get("credits") or {}) if provider == "codex" else {}
+            if credits.get("has_credits") and _num(credits.get("balance")) is not None:
+                notes.append("额外点数：" + _fmt_amount(_num(credits["balance"])))
+            limited = bool((data.get("rate_limit") or {}).get("limit_reached")) if provider == "codex" else False
+            if limited:
+                notes.append("当前已达到速率上限")
+            code_ratio = _num(data.get("code_used_ratio")) if provider == "kimi" else None
+            if code_ratio is not None and code_ratio > 0:
+                notes.append("Kimi Code 已用月总额度的 %d%%" % round(code_ratio * 100))
+            until = _num(data.get("until")) if provider == "zcode" else None
+            if until is not None:
+                try:
+                    notes.append(datetime.fromtimestamp(until).strftime("订阅到期：%Y-%m-%d %H:%M"))
+                except (OSError, OverflowError, ValueError):
+                    pass
+            updated = ""
+            saved_at = self.last_success.get(provider)
             if data and saved_at:
-                lines.append("%s 最后成功更新：%s%s" % (
-                    name, datetime.fromtimestamp(saved_at).strftime("%m-%d %H:%M:%S"),
-                    "（当前显示上次记录）" if error else ""))
-        if any((self.error, self.kimi_error, self.zcode_error)):
-            lines.append("* 表示刷新失败或等待刷新；灰色数字为上次记录")
-        if self.last_refresh:
-            lines.append("上次尝试刷新：" + self.last_refresh.strftime("%H:%M:%S"))
-        lines.append("左键刷新 · 右键菜单")
-        return "\n".join(lines)
+                try:
+                    updated = datetime.fromtimestamp(saved_at).strftime("最后成功更新 %m-%d %H:%M:%S")
+                except (OSError, OverflowError, ValueError):
+                    pass
+            sections.append({"id": provider, "title": title, "color": color, "plan": plan,
+                             "windows": rows, "notes": notes, "error": error, "updated": updated, "limited": limited})
+        return sections
 
     def render(self):
         self._apply_font_size()   # 先定字号再量宽，保证与 anchor 布局一致
@@ -1834,6 +1807,8 @@ class TokenDuck:
         self.width = 4 + label_w + 3 + bars_zone + 4
         self.anchor()
         self._update_account_status()
+        if getattr(self, "_tip", None) is not None:
+            self._refresh_tip()
 
     def _apply_font_size(self):
         """按任务栏高度/行数选字号：三行挤不下时自动缩小（只降不升）。"""
@@ -2016,24 +1991,66 @@ class TokenDuck:
         for delay in (0, 80, 250, 600):
             self.root.after(delay, self._safe_lift)
 
+    def _cancel_tip_job(self, name):
+        job = getattr(self, name, None)
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except tk.TclError:
+                pass
+            setattr(self, name, None)
+
+    def schedule_tip(self):
+        self._cancel_tip_job("_tip_hide_job")
+        self._cancel_tip_job("_tip_show_job")
+        if self._tip is None or not self._tip.winfo_exists():
+            self._tip = None
+            self._tip_show_job = self.root.after(220, self.show_tip)
+
+    def schedule_tip_hide(self):
+        self._cancel_tip_job("_tip_show_job")
+        self._cancel_tip_job("_tip_hide_job")
+        if self._tip is not None:
+            self._tip_hide_job = self.root.after(180, self._close_tip_if_outside)
+
+    def _pointer_in_hover(self):
+        x, y = self.root.winfo_pointerxy()
+        for window in (self.root, self._tip):
+            if window is not None and window.winfo_exists():
+                left, top = window.winfo_rootx(), window.winfo_rooty()
+                if left <= x < left + window.winfo_width() and top <= y < top + window.winfo_height():
+                    return True
+        return False
+
+    def _close_tip_if_outside(self):
+        self._tip_hide_job = None
+        if not self._pointer_in_hover():
+            self.hide_tip()
+
     def show_tip(self):
-        self.hide_tip()
-        tip = tk.Toplevel(self.root)
-        tip.transient(self.root)
-        tip.overrideredirect(True)
-        tip.attributes("-toolwindow", True)
-        tip.attributes("-topmost", True)
-        label = tk.Label(tip, text=self.tip_text(), justify="left",
-                         bg="#202020", fg="#eeeeee", font=("Microsoft YaHei UI", 9),
-                         padx=10, pady=6, bd=1, relief="solid")
-        label.pack()
-        tip.update_idletasks()
-        x = self.screen_x + self.width - tip.winfo_reqwidth()
-        y = self.screen_y - tip.winfo_reqheight() - 6
-        tip.geometry("+%d+%d" % (max(0, x), max(0, y)))
-        self._tip = tip
+        self._cancel_tip_job("_tip_show_job")
+        self._cancel_tip_job("_tip_hide_job")
+        if self._tip is not None and self._tip.winfo_exists():
+            return
+        anchor = (self.screen_x, self.screen_y, self.screen_x + self.width, self.screen_y + self.tb_h)
+        self._tip = QuotaHover(self.root, self.hover_sections(), anchor,
+                               light=_contrast_text_color(self.bg) != "#ffffff",
+                               on_enter=lambda: self._cancel_tip_job("_tip_hide_job"),
+                               on_leave=self.schedule_tip_hide)
+        self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
+
+    def _refresh_tip(self):
+        self._cancel_tip_job("_tip_refresh_job")
+        if self._tip is not None and self._tip.winfo_exists():
+            self._tip.anchor_rect = (self.screen_x, self.screen_y, self.screen_x + self.width, self.screen_y + self.tb_h)
+            self._tip.update_sections(self.hover_sections())
+            self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
+        else:
+            self._tip = None
 
     def hide_tip(self):
+        for name in ("_tip_show_job", "_tip_hide_job", "_tip_refresh_job"):
+            self._cancel_tip_job(name)
         if self._tip is not None:
             try:
                 self._tip.destroy()
@@ -2481,11 +2498,25 @@ def self_check():
             report["text_does_not_overlap"] = all(
                 bar.canvas.bbox(pct)[2] + 2 <= bar.canvas.bbox(timer)[0]
                 for pct, timer in zip(bar.seg_texts[1], bar.seg_timers[1]))
+            bar.show_tip()
+            card = bar._tip
+            kimi_rows = [row for row in card.quota_rows if row["provider"] == "kimi"]
+            report["hover_full_quota_visible"] = len(kimi_rows) == 2 and all(
+                row["value"].cget("text") == "100%" for row in kimi_rows)
+            card_style = get_style(user32.GetAncestor(card.winfo_id(), 2), -20)
+            report["hover_does_not_activate"] = bool(card_style & 0x08000000)
+            report["hover_taskbar_icon_hidden"] = bool(card_style & 0x80) and not bool(card_style & 0x40000)
+            # Exercise updates without recreating the top-level window.
+            card.update_sections(bar.hover_sections())
+            report["hover_updates_in_place"] = card is bar._tip and len(card.quota_rows) == 2
+            bar.hide_tip()
         finally:
             bar.quit()
         report["ok"] = all(report[k] for k in ("user_encryption", "cross_site_redirect_blocked",
                                                "full_quota_visible", "text_does_not_overlap",
-                                               "taskbar_icon_hidden"))
+                                               "taskbar_icon_hidden", "hover_full_quota_visible",
+                                               "hover_does_not_activate", "hover_taskbar_icon_hidden",
+                                               "hover_updates_in_place"))
     except Exception as e:
         report["error"] = type(e).__name__ + ": " + str(e)
     os.makedirs(DATA_DIR, exist_ok=True)

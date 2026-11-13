@@ -1,5 +1,8 @@
+param([string]$OutputDirectory = 'dist')
+
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
+$releaseRoot = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory } else { Join-Path $PSScriptRoot $OutputDirectory }
 $buildPython = Join-Path $PSScriptRoot '.build-venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $buildPython)) {
     python -m venv (Join-Path $PSScriptRoot '.build-venv')
@@ -10,12 +13,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Build dependencies failed' }
 $bundledLicenses = Join-Path $PSScriptRoot 'build\release-licenses\BUNDLED_LICENSES.txt'
 & $buildPython (Join-Path $PSScriptRoot 'tools\collect_licenses.py') $bundledLicenses
 if ($LASTEXITCODE -ne 0) { throw 'License collection failed' }
-& $buildPython -m PyInstaller --noconfirm (Join-Path $PSScriptRoot 'TokenDuck.spec')
+& $buildPython -m PyInstaller --noconfirm --distpath $releaseRoot (Join-Path $PSScriptRoot 'TokenDuck.spec')
 if ($LASTEXITCODE -ne 0) { throw 'Executable build failed' }
 $releaseVersion = [regex]::Match((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'tokenduck.py') -Raw -Encoding utf8), '(?m)^APP_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"').Groups[1].Value
 if (-not $releaseVersion) { throw 'Cannot read application version' }
-$releaseExe = Join-Path $PSScriptRoot 'dist\TokenDuck.exe'
-$releaseFolder = Join-Path $PSScriptRoot ('dist\TokenDuck-' + $releaseVersion + '-windows')
+$releaseExe = Join-Path $releaseRoot 'TokenDuck.exe'
+$releaseFolder = Join-Path $releaseRoot ('TokenDuck-' + $releaseVersion + '-windows')
 New-Item -ItemType Directory -Path $releaseFolder -Force | Out-Null
 Copy-Item -LiteralPath $releaseExe -Destination $releaseFolder -Force
 foreach ($name in @('README.md', 'README.en.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md')) {
@@ -35,7 +38,7 @@ $releaseZip = $releaseFolder + '.zip'
 $releaseFiles = @(Get-ChildItem -LiteralPath $releaseFolder | Select-Object -ExpandProperty FullName)
 Compress-Archive -LiteralPath $releaseFiles -DestinationPath $releaseZip -Force
 $zipDigest = (Get-FileHash -Algorithm SHA256 -LiteralPath $releaseZip).Hash.ToLowerInvariant()
-Set-Content -LiteralPath (Join-Path $PSScriptRoot 'dist\SHA256SUMS.txt') -Value @(
+Set-Content -LiteralPath (Join-Path $releaseRoot 'SHA256SUMS.txt') -Value @(
     ($exeDigest + '  TokenDuck.exe'),
     ($zipDigest + '  ' + (Split-Path -Leaf $releaseZip))
 ) -Encoding ascii

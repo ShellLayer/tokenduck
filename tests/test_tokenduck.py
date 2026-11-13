@@ -268,7 +268,7 @@ class DisplayTests(unittest.TestCase):
         for item in ("pct1-0", "cd1-0", "fg1-0"):
             self.assertEqual(bar.canvas.items[item]["fill"], bar.muted_color)
         self.assertEqual(bar.canvas.items["label1"]["text"], "kimi*")
-        self.assertIn("当前显示上次记录", bar.tip_text())
+        self.assertEqual(bar.hover_sections()[1]["error"], "network timeout")
 
     def test_missing_percent_does_not_shift_reset_onto_another_window(self):
         bar = bare_bar()

@@ -20,6 +20,8 @@ The current UI is primarily Chinese. Tested on **Windows 11 x64**. Windows 10, o
 
 Left-click refreshes; hover shows details; right-click opens account, display and startup settings. Percentages show **remaining** allowance. Active unused Kimi windows display `100%`. Failed refreshes keep the last reading muted and marked `*`.
 
+The hover flyout uses provider cards with side-by-side quota bars, reset times, plans and update status. It follows the light or dark theme, stays open when the pointer enters it, and scrolls when the monitor has limited space.
+
 ## Account connections
 
 | Service | Connection |
