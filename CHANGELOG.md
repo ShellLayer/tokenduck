@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 — 2026-11-13
+
+- Removed the hover window and all automatic hover and left-click actions.
+- Moved monthly totals, counts, reset times, Code attribution, plans, credits, expiry and connection issues into read-only context-menu rows.
+- Put Kimi totals first and refresh the details from current data whenever the menu opens, while preserving the existing management actions.
+- Retained always-visible taskbar quotas, remaining/used mode, last-success information and passive taskbar window behavior.
+- Replaced hover previews and checks with subscription-menu regressions and hidden-window checks that do not post menus or capture the screen.
+
 ## 0.3.6 — 2026-11-13
 
 - Further reduced the hover tooltip's common layout from 320×266 to 260×133 logical pixels.

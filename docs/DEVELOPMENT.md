@@ -17,7 +17,7 @@ python tokenduck.py --self-check
 
 离线测试使用合成账号、模拟网络与临时文件，覆盖 Kimi 零用量省略字段、有效窗口与未知状态、额度解析、缓存失效显示、账号绑定、独立续期、加密存储、原子迁移、跨进程保护、请求目标和重定向边界，以及更名后的数据与自启兼容。
 
-`TokenDuck.exe --self-check` 不读取真实账号，不访问账号接口，结果写入所选数据目录的 `self_check.json`。它验证 DPAPI 往返、跨站重定向拒绝、Kimi 满额文字、文字间距和原生窗口工具样式。
+`TokenDuck.exe --self-check` 不读取真实账号，不访问账号接口，结果写入所选数据目录的 `self_check.json`。它验证 DPAPI 往返、跨站重定向拒绝、Kimi 满额文字、任务栏文字间距、右键详情完整性、只读菜单行和原生窗口工具样式。
 
 `python tokenduck.py --once` 在没有其他实例时请求真实额度并打印；打包版的输出保存到数据目录下 `quota_diagnostics.json`。这属于真实账号操作，不是离线测试。日常刷新请使用现有实例的右键菜单。
 
@@ -26,18 +26,18 @@ python tokenduck.py --self-check
 | 路径 | 用途 |
 | --- | --- |
 | `tokenduck.py` | 平台适配、额度请求、解析、缓存、任务栏界面与设置 |
-| `hover_cards.py` | 补充信息投影、轻量悬停、点击穿透与屏幕内定位 |
+| `subscription_menu.py` | 订阅详情菜单、重置说明与被动窗口样式 |
 | `secure_store.py` | 当前 Windows 用户加密的凭证存储 |
 | `codexbar.py` | 更名前源码启动命令的兼容入口 |
 | `tests/` | 离线行为与账号保护测试 |
 | `TokenDuck.spec` | PyInstaller 打包配置 |
 | `tools/collect_licenses.py` | 收集当前构建环境中随发行包分发的许可 |
 
-`python tools/preview_hover.py` 用合成数据预览悬停提示，不读取真实账号或请求网络。F2/F3 切换深浅主题，F4 检查旧读数，F5/F6 切换已用/剩余，Esc 退出。预览窗口为方便开发检查带有标题栏；实际提示没有独立窗口按钮，不抢占键盘焦点，并允许点击穿透。
+`subscription_menu_rows` 只接收公开额度字段并生成只读信息行。菜单每次打开时重建信息区域，操作区域保持稳定。任务栏没有鼠标进入、离开或左键动作绑定。
 
 需要在现有程序运行时构建候选版本，可使用 `./build.ps1 -OutputDirectory build/candidate`，验证后再替换正在使用的版本。
 
-`python tools/check_hover_layout.py` 使用透明测试窗口检查真实 Tk 布局，包括补充信息筛选、紧凑尺寸、文字与数字间距、进度条边界和高缩放尺寸限制。全部使用合成数据，不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
+`python tools/check_menu.py` 使用合成数据和隐藏窗口检查真实 Tk 菜单，包括额度口径、正常与旧读数、只读信息行、重复打开和高缩放文字宽度。检查不弹出菜单、不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
 
 加密文件头、凭证锁和单实例标记中的旧名称是兼容格式，不能直接替换。旧用户原地复用已有数据目录；新安装使用 TokenDuck 目录，不自动搬移或重新加密账号。
 

@@ -37,9 +37,9 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
-from hover_cards import QuotaHover, make_passive_window, reset_caption
+from subscription_menu import make_passive_window, reset_caption, subscription_menu_rows
 
-APP_VERSION = "0.3.6"
+APP_VERSION = "0.3.7"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -1479,8 +1479,6 @@ class TokenDuck:
         self.last_success = {name: entry["saved_at"] for name, entry in cached.items()}
         self.last_refresh = None
         self.width = 120
-        self._tip = None
-        self._tip_show_job = self._tip_hide_job = self._tip_refresh_job = None
         self.screen_x = 0
         self.screen_y = 0
         self.tb_h = 48                # 最近一次探测到的任务栏高（anchor 里更新）
@@ -1568,12 +1566,11 @@ class TokenDuck:
             self.seg_texts.append(pct)
             self.seg_timers.append(cd)
 
-        self.canvas.bind("<Button-1>", self.on_left_click)
         self.canvas.bind("<ButtonRelease-3>", self.show_menu)  # 松开才弹，避免同一次点击的释放误选菜单项
-        self.canvas.bind("<Enter>", lambda e: self.schedule_tip())
-        self.canvas.bind("<Leave>", lambda e: self.schedule_tip_hide())
 
         self.menu = tk.Menu(self.root, tearoff=0)
+        self.menu.configure(disabledforeground=self.menu.cget("foreground"))
+        self._menu_detail_count = 0
         self.menu.add_command(label="立即刷新", command=self.refresh_now)
         self.menu.add_command(label="账户与登录…", command=self.show_account_settings)
         self.menu.add_command(label="显示与刷新设置…", command=self.show_display_settings)
@@ -1663,9 +1660,6 @@ class TokenDuck:
                                              ("kimi", self.kimi_data),
                                              ("zcode", self.zcode_data))})
 
-    def on_left_click(self, _event):
-        self.hide_tip()
-
     def poll_loop(self):
         while not self.stop_event.is_set():
             self.fetch_once()
@@ -1742,8 +1736,8 @@ class TokenDuck:
         return [(label + " " + mark, main, reached, error, rem, reset)
                 for label, main, reached, error, rem, reset in rows]
 
-    def hover_sections(self, now=None):
-        """只提取卡片需要的显示字段，不复制登录数据。"""
+    def subscription_sections(self, now=None):
+        """只提取订阅详情需要的显示字段，不复制登录数据。"""
         now = time.time() if now is None else now
         mode = self.quota_display()
         kind = "已用" if mode == "used" else "剩余"
@@ -1861,8 +1855,6 @@ class TokenDuck:
         self.width = 4 + label_w + 3 + bars_zone + 4
         self.anchor()
         self._update_account_status()
-        if getattr(self, "_tip", None) is not None:
-            self._refresh_tip()
 
     def _apply_font_size(self):
         """按任务栏高度/行数选字号：三行挤不下时自动缩小（只降不升）。"""
@@ -2046,62 +2038,24 @@ class TokenDuck:
         for delay in (0, 80, 250, 600):
             self.root.after(delay, self._safe_lift)
 
-    def _cancel_tip_job(self, name):
-        job = getattr(self, name, None)
-        if job is not None:
-            try:
-                self.root.after_cancel(job)
-            except tk.TclError:
-                pass
-            setattr(self, name, None)
-
-    def schedule_tip(self):
-        self._cancel_tip_job("_tip_hide_job")
-        self._cancel_tip_job("_tip_show_job")
-        if self._tip is None or not self._tip.winfo_exists():
-            self._tip = None
-            self._tip_show_job = self.root.after(500, self.show_tip)
-
-    def schedule_tip_hide(self):
-        self._cancel_tip_job("_tip_show_job")
-        self._cancel_tip_job("_tip_hide_job")
-        if self._tip is not None:
-            self._tip_hide_job = self.root.after(120, self.hide_tip)
-
-    def show_tip(self):
-        self._cancel_tip_job("_tip_show_job")
-        self._cancel_tip_job("_tip_hide_job")
-        if self._tip is not None and self._tip.winfo_exists():
-            return
-        anchor = (self.screen_x, self.screen_y, self.screen_x + self.width, self.screen_y + self.tb_h)
-        self._tip = QuotaHover(self.root, self.hover_sections(), anchor,
-                               light=_contrast_text_color(self.bg) != "#ffffff",
-                               on_dismiss=self.hide_tip)
-        self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
-
-    def _refresh_tip(self):
-        self._cancel_tip_job("_tip_refresh_job")
-        if self._tip is not None and self._tip.winfo_exists():
-            self._tip.anchor_rect = (self.screen_x, self.screen_y, self.screen_x + self.width, self.screen_y + self.tb_h)
-            self._tip.update_sections(self.hover_sections())
-            self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
-        else:
-            self._tip = None
-
-    def hide_tip(self):
-        for name in ("_tip_show_job", "_tip_hide_job", "_tip_refresh_job"):
-            self._cancel_tip_job(name)
-        if self._tip is not None:
-            try:
-                self._tip.destroy()
-            except Exception:
-                pass
-            self._tip = None
-
     # ---------- 菜单 / 自启 ----------
 
+    def update_menu_details(self):
+        if self._menu_detail_count:
+            self.menu.delete(0, self._menu_detail_count-1)
+        rows = subscription_menu_rows(self.subscription_sections())
+        for index, row in enumerate(rows):
+            if row is None:
+                self.menu.insert_separator(index)
+            else:
+                text, heading = row
+                self.menu.insert_command(index, label=text if heading else "  "+text,
+                                         state="disabled", font=("Microsoft YaHei UI", 9,
+                                                                  "bold" if heading else "normal"))
+        self._menu_detail_count = len(rows)
+
     def show_menu(self, event):
-        self.hide_tip()
+        self.update_menu_details()
         self._kick_lift()
         self.autostart_var.set(self.autostart_enabled())
         try:
@@ -2347,7 +2301,7 @@ class TokenDuck:
         mode = tk.StringVar(value="已用额度" if self.quota_display() == "used" else "剩余额度")
         ttk.Label(panel, text="额度显示方式").grid(row=4, column=0, sticky="w", pady=6)
         ttk.Combobox(panel, textvariable=mode, values=tuple(mode_options), state="readonly", width=12).grid(row=4, column=1)
-        ttk.Label(panel, text="百分比、进度条和可换算数值会同步应用于任务栏与悬停卡片。\n任务栏空间不足时会自动缩小文字。",
+        ttk.Label(panel, text="百分比、进度条和可换算数值会同步应用于任务栏与右键详情。\n任务栏空间不足时会自动缩小文字。",
                   wraplength=330).grid(row=5, column=0, columnspan=2, sticky="w", pady=10)
 
         def apply():
@@ -2377,7 +2331,7 @@ class TokenDuck:
         messagebox.showinfo("关于 TokenDuck", "TokenDuck " + APP_VERSION +
                             "\nCodex · Kimi · ZCode 订阅额度常驻显示\n\n"
                             "本工具凭证由 Windows 当前用户加密保存在本机。\n"
-                            "悬停查看补充信息，移开收起；右键管理和刷新。", parent=self.root)
+                            "任务栏常驻显示额度；右键查看详情、管理和刷新。", parent=self.root)
 
     def toggle_autostart(self):
         if self.autostart_var.get():
@@ -2548,40 +2502,40 @@ def self_check():
             report["text_does_not_overlap"] = all(
                 bar.canvas.bbox(pct)[2] + 2 <= bar.canvas.bbox(timer)[0]
                 for pct, timer in zip(bar.seg_texts[1], bar.seg_timers[1]))
-            bar.show_tip()
-            card = bar._tip
-            report["hover_omits_taskbar_quotas"] = not card.quota_rows
+            def menu_labels():
+                return [bar.menu.entrycget(i, "label") for i in range(bar._menu_detail_count)
+                        if bar.menu.type(i) == "command"]
+
+            bar.update_menu_details()
+            report["unknown_monthly_quota_not_invented"] = any("月总额度：暂无数据" in s for s in menu_labels())
             bar.kimi_data.update({"used_ratio": 0, "amount": 1000000, "amount_left": 1000000})
             bar.render()
-            kimi_rows = [row for row in card.quota_rows if row["provider"] == "kimi"]
-            report["hover_full_quota_visible"] = len(kimi_rows) == 1 and kimi_rows[0]["value"].cget("text") == "100%"
-            card_style = get_style(user32.GetAncestor(card.winfo_id(), 2), -20)
-            report["hover_does_not_activate"] = bool(card_style & 0x08000000)
-            report["hover_taskbar_icon_hidden"] = bool(card_style & 0x80) and not bool(card_style & 0x40000)
-            report["hover_click_through"] = bool(card_style & 0x20) and bool(card_style & 0x80000)
+            bar.update_menu_details()
+            report["menu_full_quota_visible"] = any("月总额度：剩余 100%" in s for s in menu_labels())
+            report["menu_details_read_only"] = all(
+                bar.menu.entrycget(i, "state") == "disabled" and not bar.menu.entrycget(i, "command")
+                for i in range(bar._menu_detail_count) if bar.menu.type(i) == "command")
+            report["hover_disabled"] = not bar.canvas.bind("<Enter>") and not bar.canvas.bind("<Leave>")
+            report["left_click_has_no_action"] = not bar.canvas.bind("<Button-1>")
             report["taskbar_remains_clickable"] = not bool(extended_style & 0x20)
-            old_value_widgets = [row["value"] for row in card.quota_rows]
-            card.update_sections(bar.hover_sections())
-            report["hover_updates_in_place"] = old_value_widgets == [row["value"] for row in card.quota_rows]
-
-            def unexpected_refresh():
-                raise RuntimeError("离线自检不应刷新网络或反复调整层级")
-
-            bar.refresh_now = bar._kick_lift = unexpected_refresh
             bar.cfg["quota_display"] = "used"
             bar.render()
+            bar.update_menu_details()
             report["used_display_consistent"] = (
                 all(bar.canvas.itemcget(item, "text") == "0%" for item in bar.seg_texts[1]) and
-                all(row["value"].cget("text") == "0%" for row in card.quota_rows))
+                any("月总额度：已用 0%" in s for s in menu_labels()))
             bar.kimi_data.update({"used_ratio": .25, "amount_left": 750000, "code_used_ratio": .1})
             bar.render()
-            monthly_rows = [row for row in card.quota_rows if row["provider"] == "kimi" and row["tag"] == "月"]
-            report["monthly_quota_has_progress"] = (len(monthly_rows) == 1 and
-                monthly_rows[0]["value"].cget("text") == "25%" and len(monthly_rows[0]["progress"].find_all()) == 2)
-            report["monthly_quota_spans_full_width"] = bool(monthly_rows) and int(monthly_rows[0]["progress"].cget("width")) == card.inner_width
+            bar.update_menu_details()
+            report["menu_monthly_amount_visible"] = any("已用 25% · 25万 / 100万" in s for s in menu_labels())
+            report["menu_code_attribution_visible"] = any("消耗月总额度的 10%" in s for s in menu_labels())
             bar.cfg["quota_display"] = "remaining"
             bar.render()
-            report["monthly_mode_switch_consistent"] = all(row["value"].cget("text") == "75%" for row in card.quota_rows)
+            bar.update_menu_details()
+            report["monthly_mode_switch_consistent"] = any("剩余 75% · 75万 / 100万" in s for s in menu_labels())
+            report["menu_refresh_does_not_duplicate_rows"] = sum(s.lstrip().startswith("月总额度：") for s in menu_labels()) == 1
+            report["menu_actions_preserved"] = sum(bar.menu.entrycget(i, "label") == "立即刷新"
+                for i in range(bar.menu.index("end")+1) if bar.menu.type(i) == "command") == 1
             bar.zcode_data = {"windows": [
                 {"tag": "5h", "used_percent": 0, "amount": 100, "amount_left": 100},
                 {"tag": "w", "used_percent": 25, "reset_at": time.time()+7200}]}
@@ -2600,25 +2554,20 @@ def self_check():
             pct_item, time_item = bar.seg_texts[2][0], bar.seg_timers[2][0]
             report["glm_stale_time_state_visible"] = bar.canvas.itemcget(time_item, "text") == "待刷新"
             report["glm_time_text_does_not_overlap"] = bar.canvas.bbox(pct_item)[2] + 2 <= bar.canvas.bbox(time_item)[0]
-            bar.on_left_click(None)
-            report["left_click_dismisses_hover"] = bar._tip is None
-            bar.show_tip()
-            bar.schedule_tip_hide()
-            bar.root.after(160, bar.root.quit)
-            bar.root.mainloop()
-            report["hover_auto_hides"] = bar._tip is None
+            bar.kimi_error = "synthetic connection failure"
+            bar.last_success["kimi"] = time.time()-600
+            bar.data = {"plan_type": "plus", "credits": {"has_credits": True, "balance": 20}}
+            bar.zcode_data["plan_name"] = "GLM Coding Plan · Pro"
+            bar.zcode_data["until"] = time.time()+86400
+            bar.update_menu_details()
+            labels = menu_labels()
+            report["menu_stale_status_visible"] = any("读取失败：synthetic connection failure" in s for s in labels)
+            report["menu_last_success_visible"] = any("最后成功更新" in s for s in labels)
+            report["menu_plans_credits_expiry_visible"] = (any("Codex · Plus" in s for s in labels) and
+                any("额外点数余额：20" in s for s in labels) and any("订阅到期：" in s for s in labels))
         finally:
             bar.quit()
-        report["ok"] = all(report[k] for k in ("user_encryption", "cross_site_redirect_blocked",
-                                               "full_quota_visible", "text_does_not_overlap",
-                                               "taskbar_icon_hidden", "taskbar_does_not_activate", "hover_full_quota_visible",
-                                               "hover_does_not_activate", "hover_taskbar_icon_hidden",
-                                               "hover_updates_in_place", "hover_omits_taskbar_quotas", "hover_click_through", "taskbar_remains_clickable",
-                                               "used_display_consistent", "left_click_dismisses_hover", "hover_auto_hides",
-                                               "monthly_quota_has_progress", "monthly_quota_spans_full_width",
-                                               "monthly_mode_switch_consistent", "glm_full_state_visible",
-                                               "glm_unused_state_visible", "glm_rolling_state_visible",
-                                               "glm_stale_time_state_visible", "glm_time_text_does_not_overlap"))
+        report["ok"] = all(value for key, value in report.items() if key not in ("version", "ok"))
     except Exception as e:
         report["error"] = type(e).__name__ + ": " + str(e)
     os.makedirs(DATA_DIR, exist_ok=True)

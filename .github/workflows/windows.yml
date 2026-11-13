@@ -23,8 +23,8 @@ jobs:
           architecture: x64
       - name: Offline tests
         run: python -B -m unittest discover -s tests -v
-      - name: Check hover layout without screen capture
-        run: python -B tools/check_hover_layout.py
+      - name: Check subscription menu without screen capture
+        run: python -B tools/check_menu.py
       - name: Build portable package
         shell: pwsh
         run: ./build.ps1

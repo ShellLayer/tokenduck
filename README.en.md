@@ -4,7 +4,7 @@
 
 [Download for Windows](https://github.com/ShellLayer/tokenduck/releases/latest) · [中文](README.md)
 
-TokenDuck keeps **Codex, Kimi, and GLM Coding Plan / ZCode** quotas and reset countdowns visible together. Choose remaining or used allowance across the taskbar and flyout. No click is needed to reveal quotas. The main widget has no separate taskbar button or Alt+Tab entry.
+TokenDuck keeps **Codex, Kimi, and GLM Coding Plan / ZCode** quotas and reset countdowns visible together. Choose remaining or used allowance across the taskbar and context menu. No click is needed to reveal quotas. The main widget has no separate taskbar button or Alt+Tab entry.
 
 ![Illustrative preview with sample values](assets/preview.svg)
 
@@ -18,13 +18,13 @@ TokenDuck keeps **Codex, Kimi, and GLM Coding Plan / ZCode** quotas and reset co
 
 The current UI is primarily Chinese. Tested on **Windows 11 x64**. Windows 10, other architectures, vertical taskbars and multi-monitor combinations have not been fully validated. Binaries are currently unsigned; SHA-256 checksums are provided with each release.
 
-Hover briefly to see supplementary information; moving away closes the tooltip. It is click-through and does not pin itself on screen. Refresh manually from the taskbar's right-click menu, or let the timer refresh automatically. Right-click also opens account, display and startup settings.
+Right-click the taskbar widget to see subscription details, with Kimi monthly totals first, followed by plans, expiry and connection issues. The widget has no hover popup or left-click action. The same menu provides manual refresh, account, display and startup settings.
 
 The default is **remaining** allowance. Choose **剩余额度** (remaining) or **已用额度** (used) in **显示与刷新设置…**. Percentages, bar fill and convertible allowance counts change together. Taskbar labels use **余** for remaining and **用** for used. Unused Kimi windows display `100%` remaining or `0%` used. Failed refreshes keep the last reading muted and marked `*`; low-allowance colors always reflect actual remaining capacity.
 
-The compact hover tooltip focuses on information beyond the taskbar: monthly totals, plans, expiry and connection issues. Short-term quota bars remain visible in the taskbar. The tooltip follows the light or dark theme and automatically closes when the pointer leaves the taskbar widget.
+Short-term quota bars remain visible in the taskbar. Supplementary details appear as read-only rows above the actions in the right-click menu, using the current readings each time the menu opens.
 
-Kimi's monthly total is the main full-width progress bar in the tooltip. Counts and the reset date sit under the bar and follow the selected remaining/used mode. Plans and expiry use short text rows. There is no separate heading or instruction footer; a typical tooltip is 260×133 logical pixels.
+Kimi monthly percentages, counts and reset times follow the selected remaining/used mode. Code consumption remains an attribution within the monthly total. Failed refreshes keep the last reading and show the failure reason and last successful update in the menu.
 
 GLM's 5-hour quota recovers dynamically. If the API omits the next recovery time, the taskbar shows **已满** (full), **未用** (unused in used mode), or **滚动** (rolling recovery). Stale readings without a precise time show **待刷新**. A recovery countdown is shown only when an exact timestamp is supplied.
 
