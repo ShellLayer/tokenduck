@@ -253,6 +253,23 @@ def bare_bar():
 
 
 class DisplayTests(unittest.TestCase):
+    def test_healthy_providers_keep_distinct_colors_across_modes_and_themes(self):
+        for mode in ("remaining", "used"):
+            for background in ("#1c1c1c", "#f2f2f2"):
+                with self.subTest(mode=mode, background=background):
+                    bar = bare_bar()
+                    bar.bg = background
+                    bar.cfg["quota_display"] = mode
+                    bar.data = {"rate_limit": {"primary_window": {
+                        "used_percent": 10, "limit_window_seconds": 18000}}}
+                    bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 20}]}
+                    bar.zcode_data = {"windows": [{"tag": "5h", "used_percent": 30}]}
+                    with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
+                        bar.render()
+                    colors = [bar.canvas.items[f"fg{i}-0"]["fill"] for i in range(3)]
+                    self.assertEqual(len(set(colors)), 3)
+                    self.assertEqual([row[0] for row in bar.bar_rows()], ["codex", "kimi", "zcode"])
+
     def test_glm_full_state_and_weekly_countdown_both_remain_visible(self):
         for mode, expected in (("remaining", "已满"), ("used", "未用")):
             bar = bare_bar()
@@ -285,7 +302,7 @@ class DisplayTests(unittest.TestCase):
         with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
             bar.render()
         self.assertEqual(bar.canvas.items["pct1-0"]["text"], "25%")
-        self.assertEqual(bar.canvas.items["label1"]["text"], "kimi 用")
+        self.assertEqual(bar.canvas.items["label1"]["text"], "kimi")
         x0, _, x1, _ = bar.canvas.items["bg1-0"]["coords"]
         fx0, _, fx1, _ = bar.canvas.items["fg1-0"]["coords"]
         self.assertAlmostEqual((fx1-fx0)/(x1-x0), .25, delta=.01)
@@ -308,7 +325,7 @@ class DisplayTests(unittest.TestCase):
         with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
             bar.render()
         self.assertEqual(bar.canvas.items["pct1-0"]["text"], "98%")
-        self.assertEqual(bar.canvas.items["fg1-0"]["fill"], "#e74c3c")
+        self.assertEqual(bar.canvas.items["fg1-0"]["fill"], app._quota_palette("#1c1c1c")["critical"])
 
     def test_full_quota_actually_renders_as_100_percent(self):
         bar = bare_bar()
@@ -325,7 +342,7 @@ class DisplayTests(unittest.TestCase):
             bar.render()
         for item in ("pct1-0", "cd1-0", "fg1-0"):
             self.assertEqual(bar.canvas.items[item]["fill"], bar.muted_color)
-        self.assertEqual(bar.canvas.items["label1"]["text"], "kimi 余*")
+        self.assertEqual(bar.canvas.items["label1"]["text"], "kimi*")
         self.assertEqual(bar.subscription_sections()[1]["error"], "network timeout")
 
     def test_missing_percent_does_not_shift_reset_onto_another_window(self):

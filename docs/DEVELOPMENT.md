@@ -33,11 +33,13 @@ python tokenduck.py --self-check
 | `TokenDuck.spec` | PyInstaller 打包配置 |
 | `tools/collect_licenses.py` | 收集当前构建环境中随发行包分发的许可 |
 
-`subscription_menu_rows` 只接收公开额度字段并生成只读信息行。菜单每次打开时重建信息区域，操作区域保持稳定。任务栏没有鼠标进入、离开或左键动作绑定。交互保护同时检查菜单发布状态、Tk 鼠标抓取、可见子窗口与 [Windows GUI 线程菜单状态](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-guithreadinfo)，有交互时不抬升或移动任务栏窗口；位置未改变时不重复设置几何信息。
+`subscription_menu_rows` 只接收公开额度字段并生成只读信息行。菜单每次打开时重建信息区域，操作区域保持稳定。任务栏没有鼠标进入、离开或左键动作绑定。交互保护同时检查菜单发布状态、Tk 鼠标抓取、可见子窗口与 [Windows GUI 线程菜单状态](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-guithreadinfo)，有交互时不重绘、修改字体、抬升或移动任务栏窗口，结束后合并处理待刷新的界面。字体布局按任务栏高度、字号和 Tk 缩放缓存，位置未改变时不重复设置几何信息。
 
 需要在现有程序运行时构建候选版本，可使用 `./build.ps1 -OutputDirectory build/candidate`，验证后再替换正在使用的版本。
 
 `python tools/check_menu.py` 使用合成数据和隐藏窗口检查真实 Tk 菜单，包括额度口径、正常与旧读数、只读信息行、重复打开、高缩放文字宽度、按钮选择与保存，以及透明测试对话框打开时对任务栏抬升和移动的抑制。检查不弹出菜单、不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
+
+`python tools/check_popup.py` 另外短暂显示一个使用合成数据的真实 Windows 菜单，跨越定时布局与数据刷新回调，记录原生菜单尺寸事件；检测到反复缩小或重排即失败。其菜单操作均为空动作，自动关闭并恢复前台窗口，不读取账号、不捕获屏幕。此项用于覆盖仅检查隐藏控件时遗漏的真实菜单行为。
 
 加密文件头、凭证锁和单实例标记中的旧名称是兼容格式，不能直接替换。旧用户原地复用已有数据目录；新安装使用 TokenDuck 目录，不自动搬移或重新加密账号。
 

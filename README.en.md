@@ -20,7 +20,7 @@ The current UI is primarily Chinese. Tested on **Windows 11 x64**. Windows 10, o
 
 Right-click the taskbar widget to see subscription details, with Kimi monthly totals first, followed by plans, expiry and connection issues. The widget has no hover popup or left-click action. The same menu provides manual refresh, account, display and startup settings.
 
-The default is **remaining** allowance. Choose the **剩余额度** (remaining) or **已用额度** (used) button in **显示与刷新设置…**. Percentages, bar fill and convertible allowance counts change together. Taskbar labels use **余** for remaining and **用** for used. Unused Kimi windows display `100%` remaining or `0%` used. Failed refreshes keep the last reading muted and marked `*`; low-allowance colors always reflect actual remaining capacity.
+The default is **remaining** allowance. Choose the **剩余额度** (remaining) or **已用额度** (used) button in **显示与刷新设置…**. Percentages, bar fill and convertible allowance counts change together. Taskbar labels contain only provider names; settings and subscription details identify the selected mode. Unused Kimi windows display `100%` remaining or `0%` used. Failed refreshes keep the last reading muted and marked `*`; low-allowance colors always reflect actual remaining capacity. Healthy bars use Codex green, Kimi blue and GLM purple, matching the illustration; colors adapt to light/dark themes, turn orange at 25% remaining and red at 10%.
 
 Short-term quota bars remain visible in the taskbar. Supplementary details appear as read-only rows above the actions in the right-click menu, using the current readings each time the menu opens.
 

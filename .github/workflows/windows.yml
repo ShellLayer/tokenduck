@@ -25,6 +25,8 @@ jobs:
         run: python -B -m unittest discover -s tests -v
       - name: Check subscription menu without screen capture
         run: python -B tools/check_menu.py
+      - name: Exercise native popup across timer ticks
+        run: python -B tools/check_popup.py
       - name: Build portable package
         shell: pwsh
         run: ./build.ps1

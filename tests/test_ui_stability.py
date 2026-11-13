@@ -24,6 +24,27 @@ class WindowInteractionTests(unittest.TestCase):
             self.bar._safe_lift()
         self.bar.root.lift.assert_not_called()
 
+    def test_posted_menu_blocks_font_changes_and_canvas_redraws(self):
+        self.bar._menu_active = True
+        self.bar.canvas = Mock()
+        self.bar._apply_font_size = Mock()
+        self.bar.render()
+        self.bar.anchor()
+        self.bar.apply_theme()
+        self.assertTrue(self.bar._render_pending)
+        self.bar._apply_font_size.assert_not_called()
+        self.assertEqual(self.bar.canvas.method_calls, [])
+        self.bar.root.geometry.assert_not_called()
+
+    def test_deferred_render_runs_once_when_interaction_ends(self):
+        self.bar._render_pending = True
+        self.bar.apply_theme = Mock()
+        self.bar.render = Mock(side_effect=lambda: setattr(self.bar, "_render_pending", False))
+        self.bar._resume_render()
+        self.bar._resume_render()
+        self.bar.apply_theme.assert_called_once()
+        self.bar.render.assert_called_once()
+
     def test_settings_and_child_dialogs_suppress_lifts_until_closed(self):
         window = Mock(spec=app.tk.Toplevel)
         window.state.return_value = "normal"

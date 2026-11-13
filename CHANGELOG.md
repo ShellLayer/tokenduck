@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9 — 2026-11-13
+
+- Fixed the reproduced native-menu flicker: periodic taskbar font changes caused the posted Windows menu to repeatedly collapse and resize. Pause all painting during interaction, cache font layout, and apply pending updates after closing.
+- Added a real posted-menu regression across timer and data-refresh callbacks, using native window events without screen capture.
+- Restored distinct Codex green, Kimi blue and GLM purple progress bars matching the repository illustration, with darker light-theme variants, orange at 25% remaining and red at 10% remaining.
+- Removed remaining/used suffixes from taskbar provider names; the selected mode stays visible in settings and subscription details.
+
 ## 0.3.8 — 2026-11-13
 
 - Stopped repeated taskbar lifts and geometry changes from competing with menus, popdowns and settings dialogs; removed delayed post-click raises.

@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from subscription_menu import make_passive_window, native_menu_active, reset_caption, subscription_menu_rows
 
-APP_VERSION = "0.3.8"
+APP_VERSION = "0.3.9"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -258,6 +258,14 @@ def _contrast_text_color(bg):
 
 def _theme_palette(bg, fg):
     return bg, fg, _blend(fg, bg, 0.55), _blend(fg, bg, 0.12)
+
+
+def _quota_palette(bg):
+    if _contrast_text_color(bg) != "#ffffff":
+        return {"providers": ("#24855b", "#2f6fc6", "#8355bd"),
+                "warning": "#9c640c", "critical": "#c9434e"}
+    return {"providers": ("#58bc83", "#6caaff", "#bd9aff"),
+            "warning": "#e5b366", "critical": "#ef8586"}
 
 
 def detect_theme_colors(exclude_rect=None):
@@ -1504,6 +1512,8 @@ class TokenDuck:
         self.width = 120
         self._menu_active = False
         self._anchor_geometry = None
+        self._font_layout_key = None
+        self._render_pending = False
         self.screen_x = 0
         self.screen_y = 0
         self.tb_h = 48                # 最近一次探测到的任务栏高（anchor 里更新）
@@ -1562,7 +1572,7 @@ class TokenDuck:
                                             font=self.font_top, text="")
             self.row_items.append((label, main, timer))
         # 每窗口一个信息文字（%+倒计时，7pt 紧凑字）+ 对应矮条；后建的在 z 序上层
-        self.bar_colors = ("#3ba55d", "#4a9eff", "#b48cff")
+        self.bar_colors = _quota_palette(self.bg)["providers"]
         self.bars = []
         for color in self.bar_colors:
             segs = []
@@ -1757,9 +1767,7 @@ class TokenDuck:
         zcode_reached = any(w.get("used_percent", 0) >= 100 for w in zcode_wins)
         rows.append(("zcode", zcode_main, zcode_reached,
                      self.zcode_error, zcode_rem, zcode_reset))
-        mark = "用" if self.quota_display() == "used" else "余"
-        return [(label + " " + mark, main, reached, error, rem, reset)
-                for label, main, reached, error, rem, reset in rows]
+        return rows
 
     def subscription_sections(self, now=None):
         """只提取订阅详情需要的显示字段，不复制登录数据。"""
@@ -1845,6 +1853,10 @@ class TokenDuck:
         return sections
 
     def render(self):
+        if self._interaction_active():
+            self._render_pending = True
+            return
+        self._render_pending = False
         self._apply_font_size()   # 先定字号再量宽，保证与 anchor 布局一致
         rows = self.bar_rows()
         label_w = max(self.font_top.measure(l + ("*" if err else ""))
@@ -1894,6 +1906,10 @@ class TokenDuck:
 
     def _apply_font_size(self):
         """按任务栏高度/行数选字号：三行挤不下时自动缩小（只降不升）。"""
+        key = (self.tb_h, len(self.row_items), self.cfg["font_size"],
+               self.cfg.get("data_font_size", 8), float(self.root.tk.call("tk", "scaling")))
+        if key == self._font_layout_key:
+            return
         row_h = self.tb_h / float(len(self.row_items))
         want = int(self.cfg["font_size"])
         for size in sorted({want, max(6, want - 1), 7, 6}, reverse=True):
@@ -1904,17 +1920,22 @@ class TokenDuck:
                 break
         size = int(self.cfg.get("data_font_size", 8))
         while True:
-            self.font_seg.configure(size=size)
-            self.font_cd.configure(size=size)
+            if self.font_seg.cget("size") != size:
+                self.font_seg.configure(size=size)
+            if self.font_cd.cget("size") != size:
+                self.font_cd.configure(size=size)
             if size <= 6 or self.font_seg.metrics("linespace") <= row_h + 3:
                 break
             size -= 1
+        self._font_layout_key = key
 
     def anchor(self):
         """把窗口吸附到底部任务栏、托盘图标区左侧（置顶悬浮，定期 lift 防被被盖）。
         每行 = 标签 | 分段进度条(按余量绿/黄/红) | 余量%。
         行高足够时竖排（文字上/条下）；紧凑时（如 16px/行）横排：
         条与文字同行，条宽自适应剩余空间。"""
+        if self._interaction_active():
+            return
         try:
             user32 = ctypes.windll.user32
             self._safe_lift()
@@ -2026,19 +2047,20 @@ class TokenDuck:
                             fw = max(sx0 + 2, fw)
                         self.canvas.coords(fg_item, sx0, y_bar, fw, y_bar + bar_h)
                         self.canvas.itemconfig(fg_item, fill=(self.muted_color if stale
-                                                              else self._remain_color(rem)))
+                                                              else self._remain_color(rem, i)))
                     else:
                         self.canvas.coords(bg_item, 0, 0, 0, 0)
                         self.canvas.coords(fg_item, 0, 0, 0, 0)
         except Exception:
             _dbg("anchor 异常")
 
-    @staticmethod
-    def _remain_color(rem):
-        """余量 → 颜色（只用绿/红，黄在小字号下不清楚）：≥20 绿，<20 红。"""
-        if rem >= 20:
-            return "#3ba55d"      # 充足：绿
-        return "#e74c3c"          # 告急：红
+    def _remain_color(self, rem, provider=0):
+        palette = _quota_palette(getattr(self, "bg", "#1c1c1c"))
+        if rem <= 10:
+            return palette["critical"]
+        if rem <= 25:
+            return palette["warning"]
+        return palette["providers"][provider]
 
     def _chip_color(self):
         """垫层色：任务栏色混入少量文字色，近似透明但整块可点击。"""
@@ -2090,6 +2112,8 @@ class TokenDuck:
             self._show_menu(event)
         finally:
             self._menu_active = False
+            if getattr(self, "_render_pending", False) and not self.stop_event.is_set():
+                self.root.after_idle(self._resume_render)
 
     def _show_menu(self, event):
         self.update_menu_details()
@@ -2406,9 +2430,18 @@ class TokenDuck:
         self.root.mainloop()
 
     def _anchor_tick(self):
-        self.anchor()
+        if not self._interaction_active():
+            if self._render_pending:
+                self._resume_render()
+            else:
+                self.anchor()
         if not self.stop_event.is_set():
             self.root.after(1000, self._anchor_tick)
+
+    def _resume_render(self):
+        if self._render_pending and not self._interaction_active():
+            self.apply_theme()
+            self.render()
 
     def _render_tick(self):
         try:
@@ -2441,6 +2474,9 @@ class TokenDuck:
         return _theme_palette(bg, fg)
 
     def apply_theme(self):
+        if self._interaction_active():
+            self._render_pending = True
+            return
         auto_bg, auto_fg, _, _ = detect_theme_colors(self._theme_exclude_rect())
         bg, fg, muted, track = self._resolve_theme(auto_bg, auto_fg)
         if (bg, fg, muted, track) == (self.bg, self.fg,
@@ -2545,6 +2581,7 @@ def self_check():
             bar.root.update_idletasks()
             report["full_quota_visible"] = all(bar.canvas.itemcget(item, "text") == "100%"
                                                 for item in bar.seg_texts[1])
+            report["taskbar_labels_clean"] = [bar.canvas.itemcget(row[0], "text") for row in bar.row_items] == ["codex", "kimi", "zcode"]
             report["text_does_not_overlap"] = all(
                 bar.canvas.bbox(pct)[2] + 2 <= bar.canvas.bbox(timer)[0]
                 for pct, timer in zip(bar.seg_texts[1], bar.seg_timers[1]))
