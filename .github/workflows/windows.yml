@@ -1,0 +1,47 @@
+name: Windows checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14.10'
+          architecture: x64
+      - name: Offline tests
+        run: python -B -m unittest discover -s tests -v
+      - name: Build portable package
+        shell: pwsh
+        run: ./build.ps1
+      - name: Check packaged application
+        shell: pwsh
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'tokenduck-self-check'
+          $process = Start-Process -FilePath './dist/TokenDuck.exe' -ArgumentList '--self-check' -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Packaged self-check failed' }
+          $report = Get-Content -LiteralPath (Join-Path $env:APPDATA 'tokenduck/self_check.json') -Raw | ConvertFrom-Json
+          if (-not $report.ok) { throw 'Packaged verification did not pass' }
+          $report | ConvertTo-Json
+      - name: Save portable package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TokenDuck-windows-x64
+          path: |
+            dist/TokenDuck.exe
+            dist/TokenDuck-*-windows.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

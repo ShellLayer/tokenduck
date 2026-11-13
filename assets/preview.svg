@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="260" viewBox="0 0 920 260" role="img" aria-label="TokenDuck taskbar illustration with sample quota values">
+  <rect width="920" height="260" rx="24" fill="#111b2c"/>
+  <text x="38" y="55" fill="#f3f6fc" font-family="Segoe UI,Arial,sans-serif" font-size="28" font-weight="700">TokenDuck</text>
+  <text x="39" y="87" fill="#a0b0c7" font-family="Segoe UI,Arial,sans-serif" font-size="15">Your AI quotas. Always in sight.</text>
+  <rect x="24" y="116" width="872" height="117" rx="15" fill="#26334a"/>
+  <g fill="#71809a"><rect x="54" y="163" width="14" height="14" rx="3"/><rect x="75" y="163" width="14" height="14" rx="3"/><rect x="54" y="184" width="14" height="14" rx="3"/><rect x="75" y="184" width="14" height="14" rx="3"/><rect x="120" y="166" width="31" height="31" rx="8"/><rect x="170" y="166" width="31" height="31" rx="8"/></g>
+  <rect x="312" y="129" width="412" height="91" rx="9" fill="#172237"/>
+  <g font-family="Segoe UI,Arial,sans-serif" font-size="14" fill="#dce6f6">
+    <text x="328" y="153">Codex</text><text x="418" y="153">82%</text><text x="494" y="153" fill="#9cacc3">2h 18m</text><text x="575" y="153">64%</text><text x="650" y="153" fill="#9cacc3">4d 8h</text>
+    <text x="328" y="181">Kimi</text><text x="418" y="181">100%</text><text x="494" y="181" fill="#9cacc3">4h 52m</text><text x="575" y="181">100%</text><text x="650" y="181" fill="#9cacc3">6d 2h</text>
+    <text x="328" y="209">ZCode</text><text x="418" y="209">76%</text><text x="494" y="209" fill="#9cacc3">3h 40m</text><text x="575" y="209">91%</text><text x="650" y="209" fill="#9cacc3">5d 1h</text>
+  </g>
+  <g stroke="#33435b" stroke-width="3" stroke-linecap="round"><path d="M418 160H547M575 160H701M418 188H547M575 188H701M418 216H547M575 216H701"/></g>
+  <g stroke-width="3" stroke-linecap="round"><path d="M418 160H524M575 160H656" stroke="#58bc83"/><path d="M418 188H547M575 188H701" stroke="#6caaff"/><path d="M418 216H516M575 216H690" stroke="#bd9aff"/></g>
+  <text x="777" y="174" fill="#e4eaf5" font-family="Segoe UI,Arial,sans-serif" font-size="18">18:30</text>
+  <text x="757" y="197" fill="#9cacc3" font-family="Segoe UI,Arial,sans-serif" font-size="12">SAMPLE DATA</text>
+</svg>

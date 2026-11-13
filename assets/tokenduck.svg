@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="TokenDuck">
+  <rect width="256" height="256" rx="56" fill="#142033"/>
+  <path d="M52 170 30 130 89 146Z" fill="#ffd75b"/>
+  <ellipse cx="124" cy="174" rx="81" ry="55" fill="#ffd75b"/>
+  <circle cx="156" cy="96" r="51" fill="#ffe17c"/>
+  <path d="M193 95 234 109Q241 114 231 121L194 126Z" fill="#ff964a"/>
+  <circle cx="172" cy="84" r="9" fill="#142033"/>
+  <circle cx="175" cy="81" r="2.5" fill="white"/>
+  <path d="M77 168Q120 140 160 168Q143 202 102 202Q82 195 77 168Z" fill="#f1b93c"/>
+  <rect x="97" y="172" width="10" height="17" rx="4" fill="#142033"/>
+  <rect x="115" y="162" width="10" height="27" rx="4" fill="#142033"/>
+  <rect x="133" y="152" width="10" height="37" rx="4" fill="#142033"/>
+  <path d="M55 226H197" stroke="#76dfbd" stroke-width="8" stroke-linecap="round"/>
+</svg>
