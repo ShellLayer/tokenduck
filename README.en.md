@@ -4,7 +4,7 @@
 
 [Download for Windows](https://github.com/ShellLayer/tokenduck/releases/latest) · [中文](README.md)
 
-TokenDuck keeps remaining **Codex, Kimi, and GLM Coding Plan / ZCode** quotas and reset countdowns visible together. No click is needed to reveal quotas. The main widget has no separate taskbar button or Alt+Tab entry.
+TokenDuck keeps **Codex, Kimi, and GLM Coding Plan / ZCode** quotas and reset countdowns visible together. Choose remaining or used allowance across the taskbar and flyout. No click is needed to reveal quotas. The main widget has no separate taskbar button or Alt+Tab entry.
 
 ![Illustrative preview with sample values](assets/preview.svg)
 
@@ -18,7 +18,9 @@ TokenDuck keeps remaining **Codex, Kimi, and GLM Coding Plan / ZCode** quotas an
 
 The current UI is primarily Chinese. Tested on **Windows 11 x64**. Windows 10, other architectures, vertical taskbars and multi-monitor combinations have not been fully validated. Binaries are currently unsigned; SHA-256 checksums are provided with each release.
 
-Left-click refreshes; hover shows details; right-click opens account, display and startup settings. Percentages show **remaining** allowance. Active unused Kimi windows display `100%`. Failed refreshes keep the last reading muted and marked `*`.
+Hover shows details. Left-click pins the flyout; click again to dismiss it. Refresh manually from the right-click menu, or let the timer refresh automatically. Right-click also opens account, display and startup settings.
+
+The default is **remaining** allowance. Choose **剩余额度** (remaining) or **已用额度** (used) in **显示与刷新设置…**. Percentages, bar fill and convertible allowance counts change together. Taskbar labels use **余** for remaining and **用** for used. Unused Kimi windows display `100%` remaining or `0%` used. Failed refreshes keep the last reading muted and marked `*`; low-allowance colors always reflect actual remaining capacity.
 
 The hover flyout uses provider cards with side-by-side quota bars, reset times, plans and update status. It follows the light or dark theme, stays open when the pointer enters it, and scrolls when the monitor has limited space.
 

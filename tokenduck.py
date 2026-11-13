@@ -37,9 +37,9 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
-from hover_cards import QuotaHover, reset_caption
+from hover_cards import QuotaHover, make_passive_window, reset_caption
 
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
     "offset_x": 8,           # 与托盘图标区间的像素间距
     "font_size": 9,          # 上限；任务栏放不下三行时会自动缩小
     "data_font_size": 8,     # 常驻额度文字大小，按任务栏高度自动缩小
+    "quota_display": "remaining",  # remaining=剩余，used=已用；统一百分比和进度条口径
     "text_color": "",        # 留空 = 跟随系统主题自动
     "background": "",        # 留空 = 透明背景；可填 "#202020" 等变为纯色卡片
     "chip": True,            # 透明模式下垫一层极淡圆角色块（整块可点击；false = 纯浮字）
@@ -190,6 +191,8 @@ def load_config():
             cfg[key] = DEFAULT_CONFIG[key]
     if not isinstance(cfg.get("chip"), bool):
         cfg["chip"] = DEFAULT_CONFIG["chip"]
+    if cfg.get("quota_display") not in ("remaining", "used"):
+        cfg["quota_display"] = DEFAULT_CONFIG["quota_display"]
     cfg.pop("kimi_api_key", None)
     if not isinstance(cfg.get("allow_browser_import"), bool):
         cfg["allow_browser_import"] = False
@@ -1325,6 +1328,15 @@ def _remain(used_percent):
     return "?"
 
 
+def quota_percent(used_percent, mode="remaining"):
+    """Convert display units only; cached/provider data always retains used percent."""
+    used = _num(used_percent)
+    if used is None:
+        return "?"
+    value = used if mode == "used" else 100 - used
+    return max(0, min(100, int(round(value))))
+
+
 def _fmt_amount(n):
     """额度数值缩写显示：>=10000 用“万”。"""
     if n is None:
@@ -1440,6 +1452,7 @@ class TokenDuck:
         self.last_refresh = None
         self.width = 120
         self._tip = None
+        self._tip_pinned = False
         self._tip_show_job = self._tip_hide_job = self._tip_refresh_job = None
         self.screen_x = 0
         self.screen_y = 0
@@ -1546,6 +1559,7 @@ class TokenDuck:
         self.menu.add_command(label="退出", command=self.quit)
 
         self.root.update()
+        make_passive_window(self.root)
         self.render()
 
     @staticmethod
@@ -1623,8 +1637,12 @@ class TokenDuck:
                                              ("zcode", self.zcode_data))})
 
     def on_left_click(self, _event):
-        self._kick_lift()
-        self.refresh_now()
+        if getattr(self, "_tip_pinned", False) and self._tip is not None and self._tip.winfo_exists():
+            self.hide_tip()
+            return
+        self.show_tip()
+        self._tip_pinned = True
+        self._tip.set_pinned(True)
 
     def poll_loop(self):
         while not self.stop_event.is_set():
@@ -1637,6 +1655,10 @@ class TokenDuck:
                 self.stop_event.wait(min(1, remaining))
 
     # ---------- 显示 ----------
+
+    def quota_display(self):
+        mode = getattr(self, "cfg", {}).get("quota_display", "remaining")
+        return "used" if mode == "used" else "remaining"
 
     def bar_rows(self):
         """返回 [(label, main, reached, err, rem, reset_at), ...] 三行。
@@ -1651,7 +1673,7 @@ class TokenDuck:
                 pct = w.get("used_percent")
                 if not isinstance(pct, (int, float)):
                     continue
-                parts.append("%s%s" % (w["tag"], _remain(pct)))
+                parts.append("%s%s" % (w["tag"], quota_percent(pct, self.quota_display())))
                 rems.append(100 - pct)
                 if w.get("reset_at"):
                     resets.append(w["reset_at"])
@@ -1689,16 +1711,20 @@ class TokenDuck:
             if m:
                 zcode_main, zcode_rem, zcode_reset = m, r, t
             elif z.get("used_percent") is not None:
-                zcode_main, zcode_rem = "%s" % _remain(z["used_percent"]), 100 - z["used_percent"]
+                zcode_main, zcode_rem = "%s" % quota_percent(z["used_percent"], self.quota_display()), 100 - z["used_percent"]
                 zcode_reset = z.get("reset_at")
         zcode_reached = any(w.get("used_percent", 0) >= 100 for w in zcode_wins)
         rows.append(("zcode", zcode_main, zcode_reached,
                      self.zcode_error, zcode_rem, zcode_reset))
-        return rows
+        mark = "用" if self.quota_display() == "used" else "余"
+        return [(label + " " + mark, main, reached, error, rem, reset)
+                for label, main, reached, error, rem, reset in rows]
 
     def hover_sections(self, now=None):
         """只提取卡片需要的显示字段，不复制登录数据。"""
         now = time.time() if now is None else now
+        mode = self.quota_display()
+        kind = "已用" if mode == "used" else "剩余"
         sections = []
         for provider, title, color, data, error in (
                 ("codex", "Codex", "#3ba55d", self.data, self.error),
@@ -1714,10 +1740,11 @@ class TokenDuck:
                 plan = "ChatGPT " + str(plan).replace("_", " ").title()
             rows, notes = [], []
             if extra_month:
-                summary = "月总额度剩余 %d%%" % _remain(monthly * 100)
+                summary = "月总额度%s %d%%" % (kind, quota_percent(monthly * 100, mode))
                 amount, left = _num(data.get("amount")), _num(data.get("amount_left"))
                 if amount is not None and amount > 0 and left is not None:
-                    summary += " · %s / %s" % (_fmt_amount(left), _fmt_amount(amount))
+                    selected = max(0, amount - left) if mode == "used" else left
+                    summary += " · %s / %s" % (_fmt_amount(selected), _fmt_amount(amount))
                 notes.append(summary)
                 monthly_reset = _num(data.get("reset_at"))
                 if monthly_reset is not None:
@@ -1725,7 +1752,9 @@ class TokenDuck:
             for win in windows:
                 row = {"label": {"5h": "5 小时额度", "w": "每周额度", "月": "月总额度"}.get(
                            win["tag"], str(win["tag"]) + "额度"),
-                       "remaining": _remain(win["used_percent"]), "reset": reset_caption(win.get("reset_at"), now)}
+                       "remaining": _remain(win["used_percent"]),
+                       "display_percent": quota_percent(win["used_percent"], mode),
+                       "reset": reset_caption(win.get("reset_at"), now)}
                 amount, left = _num(win.get("amount")), _num(win.get("amount_left"))
                 if win["tag"] == "月":
                     if provider == "kimi":
@@ -1733,17 +1762,19 @@ class TokenDuck:
                     elif provider == "zcode" and amount is None:
                         amount, left = _num(data.get("limit")), _num(data.get("remaining"))
                 if amount is not None and amount > 0 and left is not None:
-                    row["detail"] = "剩余 %s / %s" % (_fmt_amount(left), _fmt_amount(amount))
+                    selected = max(0, amount - left) if mode == "used" else left
+                    row["detail"] = "%s %s / %s" % (kind, _fmt_amount(selected), _fmt_amount(amount))
                 rows.append(row)
             credits = (data.get("credits") or {}) if provider == "codex" else {}
             if credits.get("has_credits") and _num(credits.get("balance")) is not None:
-                notes.append("额外点数：" + _fmt_amount(_num(credits["balance"])))
+                notes.append("额外点数余额：" + _fmt_amount(_num(credits["balance"])))
             limited = bool((data.get("rate_limit") or {}).get("limit_reached")) if provider == "codex" else False
             if limited:
                 notes.append("当前已达到速率上限")
             code_ratio = _num(data.get("code_used_ratio")) if provider == "kimi" else None
             if code_ratio is not None and code_ratio > 0:
-                notes.append("Kimi Code 已用月总额度的 %d%%" % round(code_ratio * 100))
+                # 这是消耗来源占比，不是可独立取补数的 Kimi Code 额度。
+                notes.append("其中 Kimi Code 消耗月总额度的 %d%%" % round(code_ratio * 100))
             until = _num(data.get("until")) if provider == "zcode" else None
             if until is not None:
                 try:
@@ -1758,7 +1789,8 @@ class TokenDuck:
                 except (OSError, OverflowError, ValueError):
                     pass
             sections.append({"id": provider, "title": title, "color": color, "plan": plan,
-                             "windows": rows, "notes": notes, "error": error, "updated": updated, "limited": limited})
+                             "windows": rows, "notes": notes, "error": error, "updated": updated,
+                             "limited": limited, "display_mode": mode})
         return sections
 
     def render(self):
@@ -1919,10 +1951,11 @@ class TokenDuck:
                     rem = avail[j] if j < len(avail) else None
                     if rem is None:
                         continue
+                    value = quota_percent(100 - rem, self.quota_display())
                     # 文字：% 左对齐（黑色加粗），倒计时右对齐（黑色加粗）
                     self.canvas.coords(pct_item, sx0, y_txt)
                     self.canvas.itemconfig(
-                        pct_item, text="%d%%" % round(rem), state="normal",
+                        pct_item, text="%d%%" % value, state="normal",
                         fill=text_fill)
                     rst = resets[j] if j < len(resets) else None
                     if rst and rst > time.time():
@@ -1933,11 +1966,11 @@ class TokenDuck:
                             state="normal", fill=text_fill)
                     else:
                         self.canvas.itemconfig(cd_item, state="hidden")
-                    # 矮条贴槽底：填充 = 余量，颜色红绿灯
+                    # 填充跟随显示口径；告急颜色始终由真实余量决定。
                     if stack_ok:
                         self.canvas.coords(bg_item, sx0, y_bar, sx1, y_bar + bar_h)
-                        fw = sx0 + int(round((sx1 - sx0) * rem / 100.0))
-                        if rem > 0:
+                        fw = sx0 + int(round((sx1 - sx0) * value / 100.0))
+                        if value > 0:
                             fw = max(sx0 + 2, fw)
                         self.canvas.coords(fg_item, sx0, y_bar, fw, y_bar + bar_h)
                         self.canvas.itemconfig(fg_item, fill=(self.muted_color if stale
@@ -2024,7 +2057,7 @@ class TokenDuck:
 
     def _close_tip_if_outside(self):
         self._tip_hide_job = None
-        if not self._pointer_in_hover():
+        if not getattr(self, "_tip_pinned", False) and not self._pointer_in_hover():
             self.hide_tip()
 
     def show_tip(self):
@@ -2036,7 +2069,8 @@ class TokenDuck:
         self._tip = QuotaHover(self.root, self.hover_sections(), anchor,
                                light=_contrast_text_color(self.bg) != "#ffffff",
                                on_enter=lambda: self._cancel_tip_job("_tip_hide_job"),
-                               on_leave=self.schedule_tip_hide)
+                               on_leave=self.schedule_tip_hide, on_dismiss=self.hide_tip)
+        self._tip_pinned = False
         self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
 
     def _refresh_tip(self):
@@ -2047,8 +2081,10 @@ class TokenDuck:
             self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
         else:
             self._tip = None
+            self._tip_pinned = False
 
     def hide_tip(self):
+        self._tip_pinned = False
         for name in ("_tip_show_job", "_tip_hide_job", "_tip_refresh_job"):
             self._cancel_tip_job(name)
         if self._tip is not None:
@@ -2299,11 +2335,16 @@ class TokenDuck:
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=6, padx=(0, 15))
             variable = values[key] = tk.StringVar(value=str(self.cfg.get(key, DEFAULT_CONFIG[key])))
             ttk.Spinbox(panel, from_=lo, to=hi, width=10, textvariable=variable).grid(row=row, column=1)
-        ttk.Label(panel, text="任务栏空间不足时会自动缩小文字。",
-                  wraplength=300).grid(row=4, column=0, columnspan=2, sticky="w", pady=10)
+        mode_options = {"剩余额度": "remaining", "已用额度": "used"}
+        mode = tk.StringVar(value="已用额度" if self.quota_display() == "used" else "剩余额度")
+        ttk.Label(panel, text="额度显示方式").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Combobox(panel, textvariable=mode, values=tuple(mode_options), state="readonly", width=12).grid(row=4, column=1)
+        ttk.Label(panel, text="百分比、进度条和可换算数值会同步应用于任务栏与悬停卡片。\n任务栏空间不足时会自动缩小文字。",
+                  wraplength=330).grid(row=5, column=0, columnspan=2, sticky="w", pady=10)
 
         def apply():
             settings = dict(self.cfg)
+            settings["quota_display"] = mode_options[mode.get()]
             try:
                 for key, _, lo, hi in fields:
                     n = int(values[key].get())
@@ -2322,13 +2363,13 @@ class TokenDuck:
             self.render()
             window.destroy()
 
-        ttk.Button(panel, text="保存并应用", command=apply).grid(row=5, column=1, sticky="e")
+        ttk.Button(panel, text="保存并应用", command=apply).grid(row=6, column=1, sticky="e")
 
     def show_about(self):
         messagebox.showinfo("关于 TokenDuck", "TokenDuck " + APP_VERSION +
                             "\nCodex · Kimi · ZCode 订阅额度常驻显示\n\n"
                             "本工具凭证由 Windows 当前用户加密保存在本机。\n"
-                            "左键刷新额度，右键管理账户和设置。", parent=self.root)
+                            "悬停查看详情，左键固定或收起，右键管理和刷新。", parent=self.root)
 
     def toggle_autostart(self):
         if self.autostart_var.get():
@@ -2485,6 +2526,7 @@ def self_check():
             wrapper = user32.GetAncestor(bar.root.winfo_id(), 2)  # GA_ROOT：Tk 的原生外层窗口
             extended_style = get_style(wrapper, -20)  # GWL_EXSTYLE
             report["taskbar_icon_hidden"] = bool(extended_style & 0x80) and not bool(extended_style & 0x40000)
+            report["taskbar_does_not_activate"] = bool(extended_style & 0x08000000)
             bar.data = bar.zcode_data = None
             bar.error = bar.kimi_error = bar.zcode_error = None
             now = datetime.now(timezone.utc)
@@ -2507,16 +2549,34 @@ def self_check():
             report["hover_does_not_activate"] = bool(card_style & 0x08000000)
             report["hover_taskbar_icon_hidden"] = bool(card_style & 0x80) and not bool(card_style & 0x40000)
             # Exercise updates without recreating the top-level window.
+            old_value_widgets = [row["value"] for row in card.quota_rows]
             card.update_sections(bar.hover_sections())
-            report["hover_updates_in_place"] = card is bar._tip and len(card.quota_rows) == 2
-            bar.hide_tip()
+            report["hover_updates_in_place"] = (card is bar._tip and
+                old_value_widgets == [row["value"] for row in card.quota_rows])
+
+            def unexpected_refresh():
+                raise RuntimeError("离线自检不应刷新网络或反复调整层级")
+
+            bar.refresh_now = bar._kick_lift = unexpected_refresh
+            bar.on_left_click(None)
+            report["left_click_pins_without_redraw"] = (bar._tip_pinned and card.pinned and
+                old_value_widgets == [row["value"] for row in card.quota_rows])
+            bar.cfg["quota_display"] = "used"
+            bar.render()
+            report["used_display_consistent"] = (
+                all(bar.canvas.itemcget(item, "text") == "0%" for item in bar.seg_texts[1]) and
+                all(row["value"].cget("text") == "0%" and row["display_percent"] == 0
+                    for row in card.quota_rows if row["provider"] == "kimi"))
+            bar.on_left_click(None)
+            report["left_click_closes_pinned_hover"] = bar._tip is None and not bar._tip_pinned
         finally:
             bar.quit()
         report["ok"] = all(report[k] for k in ("user_encryption", "cross_site_redirect_blocked",
                                                "full_quota_visible", "text_does_not_overlap",
-                                               "taskbar_icon_hidden", "hover_full_quota_visible",
+                                               "taskbar_icon_hidden", "taskbar_does_not_activate", "hover_full_quota_visible",
                                                "hover_does_not_activate", "hover_taskbar_icon_hidden",
-                                               "hover_updates_in_place"))
+                                               "hover_updates_in_place", "left_click_pins_without_redraw",
+                                               "used_display_consistent", "left_click_closes_pinned_hover"))
     except Exception as e:
         report["error"] = type(e).__name__ + ": " + str(e)
     os.makedirs(DATA_DIR, exist_ok=True)

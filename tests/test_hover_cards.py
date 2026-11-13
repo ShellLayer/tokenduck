@@ -17,6 +17,52 @@ def sample_bar():
 
 
 class HoverModelTests(unittest.TestCase):
+    def test_used_mode_changes_all_provider_percentages_without_altering_health(self):
+        bar = sample_bar()
+        bar.cfg = dict(app.DEFAULT_CONFIG, quota_display="used")
+        bar.data = {"rate_limit": {"primary_window": {"used_percent": 20, "limit_window_seconds": 18000}}}
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}]}
+        bar.zcode_data = {"windows": [{"tag": "5h", "used_percent": 95}]}
+        sections = bar.hover_sections(now=1000)
+        self.assertEqual([s["windows"][0]["display_percent"] for s in sections], [20, 0, 95])
+        self.assertEqual([s["windows"][0]["remaining"] for s in sections], [80, 100, 5])
+        self.assertTrue(all(s["display_mode"] == "used" for s in sections))
+
+    def test_used_mode_converts_monthly_summary_and_count_values(self):
+        bar = sample_bar()
+        bar.cfg = dict(app.DEFAULT_CONFIG, quota_display="used")
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}, {"tag": "w", "used_percent": 25}],
+                         "used_ratio": .15, "amount": 100000, "amount_left": 85000}
+        kimi = bar.hover_sections(now=1000)[1]
+        self.assertIn("月总额度已用 15%", kimi["notes"][0])
+        self.assertIn("1.5万 / 10万", kimi["notes"][0])
+        bar.kimi_data["windows"] = []
+        row = bar.hover_sections(now=1000)[1]["windows"][0]
+        self.assertEqual(row["display_percent"], 15)
+        self.assertEqual(row["detail"], "已用 1.5万 / 10万")
+
+    def test_left_click_pins_existing_hover_without_refresh_or_repeated_lifting(self):
+        bar = sample_bar()
+        bar._tip = Mock()
+        bar._tip_pinned = False
+        bar.show_tip, bar.hide_tip = Mock(), Mock()
+        bar.refresh_now, bar._kick_lift = Mock(), Mock()
+        bar.on_left_click(None)
+        self.assertTrue(bar._tip_pinned)
+        bar._tip.set_pinned.assert_called_once_with(True)
+        bar.on_left_click(None)
+        bar.hide_tip.assert_called_once()
+        bar.refresh_now.assert_not_called()
+        bar._kick_lift.assert_not_called()
+
+    def test_pinned_hover_remains_open_when_pointer_moves_outside(self):
+        bar = sample_bar()
+        bar._tip_pinned = True
+        bar._pointer_in_hover = Mock(return_value=False)
+        bar.hide_tip = Mock()
+        bar._close_tip_if_outside()
+        bar.hide_tip.assert_not_called()
+
     def test_provider_limit_flag_is_preserved_even_without_a_zero_percent_window(self):
         bar = sample_bar()
         bar.data = {"rate_limit": {"limit_reached": True, "primary_window": {

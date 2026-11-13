@@ -3,7 +3,7 @@
 <p align="center">AI 额度，一眼就有数。<br>Always-visible AI subscription quotas in your Windows taskbar.</p>
 <p align="center"><a href="https://github.com/ShellLayer/tokenduck/releases/latest">下载 Windows 版</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/PRIVACY.md">隐私与账号保护</a> · <a href="README.en.md">English</a></p>
 
-TokenDuck 将 **Codex、Kimi 和 GLM Coding Plan / ZCode** 的剩余额度与重置倒计时常驻显示在 Windows 任务栏上。无需点击展开，也没有长期占用任务栏的独立窗口按钮。
+TokenDuck 将 **Codex、Kimi 和 GLM Coding Plan / ZCode** 的额度与重置倒计时常驻显示在 Windows 任务栏上，可统一选择显示剩余或已用。无需点击展开，也没有长期占用任务栏的独立窗口按钮。
 
 <p align="center"><img src="assets/preview.svg" width="700" alt="TokenDuck 显示示意，使用示例数据"></p>
 
@@ -12,6 +12,7 @@ TokenDuck 将 **Codex、Kimi 和 GLM Coding Plan / ZCode** 的剩余额度与重
 ## 特点
 
 - **一眼可见**：三家额度、进度条和重置倒计时同时显示。
+- **统一显示方式**：设置中选择剩余额度或已用额度，任务栏、卡片和进度条同步切换。
 - **满额也显示**：Kimi 未使用的有效额度窗口显示 `100%`。
 - **显示状态明确**：刷新失败时旧数据置灰并标 `*`；悬停查看原因和最后成功时间。
 - **悬停卡片**：按平台分区显示套餐、双列额度进度、重置时间与连接状态，适配深浅主题；移入卡片可继续阅读。
@@ -31,13 +32,16 @@ TokenDuck 将 **Codex、Kimi 和 GLM Coding Plan / ZCode** 的剩余额度与重
 
 | 操作 | 效果 |
 | --- | --- |
-| 左键额度区域 | 立即刷新 |
+| 左键额度区域 | 固定详情卡片，再次点击收起 |
 | 悬停 | 查看额度窗口、连接状态及更新时间 |
 | 右键 → 账户与登录… | 连接、重登或切换账号 |
 | 右键 → 显示与刷新设置… | 调整字号、位置与刷新间隔 |
+| 右键 → 立即刷新 | 手动更新额度 |
 | 右键 → 开机启动 / 退出 | 管理常驻运行 |
 
-百分比表示**剩余**额度：`100%` 为未使用，`0%` 为已用完。窗口通常为 5 小时和周额度，具体以服务端返回为准；只有月额度时也会显示。它不是 API 消费金额或通用 token 计数器。
+默认显示**剩余额度**：`100%` 为未使用，`0%` 为已用完。可在右键“显示与刷新设置…”中改为**已用额度**，此时 `0%` 为未使用、`100%` 为已用完。任务栏的“余 / 用”标记和卡片底部说明标明当前口径，进度条同步切换；告警颜色始终由实际余量决定。
+
+窗口通常为 5 小时和周额度，具体以服务端返回为准；只有月额度时也会显示。它不是 API 消费金额或通用 token 计数器。定时刷新与右键手动刷新均可用。
 
 ## 支持的订阅
 

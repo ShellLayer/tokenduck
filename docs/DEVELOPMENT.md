@@ -33,7 +33,7 @@ python tokenduck.py --self-check
 | `TokenDuck.spec` | PyInstaller 打包配置 |
 | `tools/collect_licenses.py` | 收集当前构建环境中随发行包分发的许可 |
 
-`python tools/preview_hover.py` 用合成数据预览悬停卡片，不读取真实账号或请求网络。F2/F3 切换深浅主题，F4 检查刷新失败的旧读数，Esc 退出。预览窗口为方便开发检查带有标题栏；实际悬停卡片没有独立窗口按钮，也不抢占键盘焦点。
+`python tools/preview_hover.py` 用合成数据预览悬停卡片，不读取真实账号或请求网络。F2/F3 切换深浅主题，F4 检查旧读数，F5/F6 切换已用/剩余，F7 切换固定状态，Esc 退出。预览窗口为方便开发检查带有标题栏；实际悬停卡片没有独立窗口按钮，也不抢占键盘焦点。
 
 需要在现有程序运行时构建候选版本，可使用 `./build.ps1 -OutputDirectory build/candidate`，验证后再替换正在使用的版本。
 

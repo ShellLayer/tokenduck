@@ -1,6 +1,7 @@
 """Compact quota cards for the hover flyout; standard-library Tkinter only."""
 
 import ctypes
+from copy import deepcopy
 from ctypes import wintypes
 from datetime import datetime
 import math
@@ -87,6 +88,25 @@ PALETTES = {
 }
 
 
+def make_passive_window(window):
+    """Keep an informational window out of mouse-activation and task switching."""
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
+        hwnd = user32.GetAncestor(window.winfo_id(), 2)
+        get_style = user32.GetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.GetWindowLongW
+        set_style = user32.SetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.SetWindowLongW
+        get_style.argtypes = [wintypes.HWND, ctypes.c_int]
+        get_style.restype = ctypes.c_ssize_t
+        set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        set_style.restype = ctypes.c_ssize_t
+        set_style(hwnd, -20, (get_style(hwnd, -20) | 0x08000080) & ~0x00040000)
+        return user32, hwnd
+    except (AttributeError, OSError, tk.TclError):
+        return None, None
+
+
 def rounded(canvas, bounds, radius, **options):
     x1, y1, x2, y2 = bounds
     r = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
@@ -97,7 +117,7 @@ def rounded(canvas, bounds, radius, **options):
 
 
 class QuotaHover(tk.Toplevel):
-    def __init__(self, owner, sections, anchor, light=False, on_enter=None, on_leave=None):
+    def __init__(self, owner, sections, anchor, light=False, on_enter=None, on_leave=None, on_dismiss=None):
         super().__init__(owner)
         self.withdraw()
         self.transient(owner)
@@ -111,6 +131,8 @@ class QuotaHover(tk.Toplevel):
         self.workarea = monitor_workarea(owner)
         self.sections = sections
         self.on_enter, self.on_leave = on_enter, on_leave
+        self.on_dismiss = on_dismiss
+        self.pinned = False
         self._key = "#010203"
         self.configure(bg=self._key)
         self.attributes("-transparentcolor", self._key)
@@ -122,7 +144,7 @@ class QuotaHover(tk.Toplevel):
             self.bind("<Enter>", lambda _event: on_enter(), add="+")
         if on_leave:
             self.bind("<Leave>", lambda _event: on_leave(), add="+")
-        self.bind("<Escape>", lambda _event: self.destroy())
+        self.bind("<Escape>", lambda _event: self.dismiss())
         self.update_idletasks()
         self._native_position()
         self.deiconify()
@@ -138,13 +160,18 @@ class QuotaHover(tk.Toplevel):
         return tk.Label(parent, text=text, **options)
 
     def update_sections(self, sections):
+        workarea = monitor_workarea(self.master)
+        render_key = (deepcopy(sections), dict(self.palette), self.anchor_rect, workarea)
+        if self.content is not None and render_key == self._render_key:
+            return
+        self._render_key = render_key
         self.sections = sections
         old_scroll = self.scroller.yview()[0] if self.content is not None else 0
         if self.content is not None:
             self.content.destroy()
         self.shell.delete("all")
         p = self.palette
-        self.workarea = monitor_workarea(self.master)
+        self.workarea = workarea
         margin = self.px(14)
         width = min(self.px(380), self.workarea[2] - self.workarea[0] - self.px(16))
         inner_width = max(self.px(180), width - 2 * margin)
@@ -153,7 +180,11 @@ class QuotaHover(tk.Toplevel):
         header = tk.Frame(self.content, bg=p["shell"])
         header.pack(fill="x", pady=(0, self.px(12)))
         self.label(header, "TokenDuck", 13, "bold").pack(side="left")
-        self.label(header, "订阅额度", color=p["muted"]).pack(side="right", anchor="s")
+        tk.Button(header, text="×", command=self.dismiss, bg=p["shell"], fg=p["muted"],
+                  activebackground=p["card"], activeforeground=p["text"], bd=0, relief="flat",
+                  font=("Segoe UI", 12), padx=self.px(3), pady=0, takefocus=False).pack(side="right")
+        self.pin_note = self.label(header, "订阅额度", color=p["muted"])
+        self.pin_note.pack(side="right", padx=(0, self.px(8)), anchor="center")
         body = tk.Frame(self.content, bg=p["shell"])
         body.pack(fill="both", expand=True)
         self.scroller = tk.Canvas(body, bg=p["shell"], bd=0, highlightthickness=0,
@@ -168,8 +199,11 @@ class QuotaHover(tk.Toplevel):
         requested = self.cards.winfo_reqheight()
         footer = tk.Frame(self.content, bg=p["shell"])
         footer.pack(fill="x", pady=(self.px(10), 0))
-        self.label(footer, "百分比均为剩余额度", 8, color=p["muted"]).pack(side="left")
-        self.label(footer, "左键刷新 · 右键设置", 8, color=p["muted"]).pack(side="right")
+        kind = "已用" if sections and sections[0].get("display_mode") == "used" else "剩余"
+        self.label(footer, "百分比均为%s额度" % kind, 8, color=p["muted"]).pack(side="left")
+        self.action_hint = self.label(footer, "", 8, color=p["muted"])
+        self.action_hint.pack(side="right")
+        self.set_pinned(self.pinned)
         header.update_idletasks()
         footer.update_idletasks()
         available = max(self.px(90), self.workarea[3] - self.workarea[1] -
@@ -256,8 +290,9 @@ class QuotaHover(tk.Toplevel):
             title.pack(fill="x")
             self.label(title, win["label"], 8, color=p["quiet"]).pack(side="left")
             remaining = win["remaining"]
+            display_percent = win.get("display_percent", remaining)
             bar_color = p["muted"] if stale else p["danger"] if remaining <= 10 else p["warn"] if remaining <= 25 else color
-            value = self.label(title, "%d%%" % remaining, 12, "bold", color=p["muted"] if stale else p["text"])
+            value = self.label(title, "%d%%" % display_percent, 12, "bold", color=p["muted"] if stale else p["text"])
             value.pack(side="right")
             progress = tk.Canvas(row, height=self.px(6), bg=p["card"], bd=0, highlightthickness=0)
             progress.pack(fill="x", pady=(self.px(5), self.px(5)))
@@ -265,8 +300,8 @@ class QuotaHover(tk.Toplevel):
             radius = self.px(3)
             progress.create_line(radius, radius, progress_width-radius, radius,
                                  fill=p["track"], width=self.px(5), capstyle="round")
-            if remaining > 0:
-                progress.create_line(radius, radius, max(radius + 0.1, (progress_width-2*radius)*remaining/100+radius), radius,
+            if display_percent > 0:
+                progress.create_line(radius, radius, max(radius + 0.1, (progress_width-2*radius)*display_percent/100+radius), radius,
                                      fill=bar_color, width=self.px(5), capstyle="round")
             reset_parts = win["reset"].split(" · ", 1)
             self.label(row, reset_parts[0], 8, color=p["muted"],
@@ -277,7 +312,8 @@ class QuotaHover(tk.Toplevel):
                            color=p["muted"], wraplength=quota_width, justify="left").pack(anchor="w", pady=(self.px(2), 0))
             if win.get("detail"):
                 self.label(row, win["detail"], 8, color=p["muted"]).pack(anchor="w", pady=(self.px(2), 0))
-            self.quota_rows.append({"provider": section["id"], "value": value, "row": row})
+            self.quota_rows.append({"provider": section["id"], "value": value, "row": row,
+                                    "progress": progress, "display_percent": display_percent})
         if not has_windows:
             self.label(inside, "暂未获取到额度", 9, color=p["muted"]).pack(anchor="w", pady=(self.px(12), self.px(2)))
         for note in section.get("notes", []):
@@ -297,6 +333,17 @@ class QuotaHover(tk.Toplevel):
         background = rounded(outer, (1, 1, width-1, height-1), self.px(11), fill=p["card"], outline=p["border"])
         outer.tag_lower(background)
 
+    def set_pinned(self, pinned):
+        self.pinned = bool(pinned)
+        self.pin_note.configure(text="已固定" if self.pinned else "订阅额度")
+        self.action_hint.configure(text="再次左键收起" if self.pinned else "左键固定 · 右键菜单")
+
+    def dismiss(self):
+        if self.on_dismiss is not None:
+            self.on_dismiss()
+        else:
+            self.destroy()
+
     def _bind_wheel(self, widget):
         widget.bind("<MouseWheel>", self._wheel, add="+")
         for child in widget.winfo_children():
@@ -309,17 +356,9 @@ class QuotaHover(tk.Toplevel):
 
     def _native_position(self):
         try:
-            user32 = ctypes.WinDLL("user32", use_last_error=True)
-            user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
-            user32.GetAncestor.restype = wintypes.HWND
-            hwnd = user32.GetAncestor(self.winfo_id(), 2)
-            get_style = user32.GetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.GetWindowLongW
-            set_style = user32.SetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.SetWindowLongW
-            get_style.argtypes = [wintypes.HWND, ctypes.c_int]
-            get_style.restype = ctypes.c_ssize_t
-            set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
-            set_style.restype = ctypes.c_ssize_t
-            set_style(hwnd, -20, (get_style(hwnd, -20) | 0x08000080) & ~0x00040000)
+            user32, hwnd = make_passive_window(self)
+            if user32 is None:
+                return
             user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                            ctypes.c_int, ctypes.c_int, wintypes.UINT]
             user32.SetWindowPos.restype = wintypes.BOOL

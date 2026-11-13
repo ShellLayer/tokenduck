@@ -252,6 +252,38 @@ def bare_bar():
 
 
 class DisplayTests(unittest.TestCase):
+    def test_used_mode_changes_visible_number_and_bar_fill_together(self):
+        bar = bare_bar()
+        bar.cfg["quota_display"] = "used"
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 25}]}
+        with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
+            bar.render()
+        self.assertEqual(bar.canvas.items["pct1-0"]["text"], "25%")
+        self.assertEqual(bar.canvas.items["label1"]["text"], "kimi 用")
+        x0, _, x1, _ = bar.canvas.items["bg1-0"]["coords"]
+        fx0, _, fx1, _ = bar.canvas.items["fg1-0"]["coords"]
+        self.assertAlmostEqual((fx1-fx0)/(x1-x0), .25, delta=.01)
+        self.assertEqual(bar.kimi_data["windows"][0]["used_percent"], 25)
+
+    def test_unused_quota_in_used_mode_is_visible_zero_not_missing(self):
+        bar = bare_bar()
+        bar.cfg["quota_display"] = "used"
+        with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
+            bar.render()
+        self.assertEqual(bar.canvas.items["pct1-0"]["text"], "0%")
+        self.assertEqual(bar.canvas.items["pct1-0"]["state"], "normal")
+        x0, _, x1, _ = bar.canvas.items["fg1-0"]["coords"]
+        self.assertEqual(x0, x1)
+
+    def test_low_remaining_stays_red_in_used_mode(self):
+        bar = bare_bar()
+        bar.cfg["quota_display"] = "used"
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 98}]}
+        with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
+            bar.render()
+        self.assertEqual(bar.canvas.items["pct1-0"]["text"], "98%")
+        self.assertEqual(bar.canvas.items["fg1-0"]["fill"], "#e74c3c")
+
     def test_full_quota_actually_renders_as_100_percent(self):
         bar = bare_bar()
         with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
@@ -267,7 +299,7 @@ class DisplayTests(unittest.TestCase):
             bar.render()
         for item in ("pct1-0", "cd1-0", "fg1-0"):
             self.assertEqual(bar.canvas.items[item]["fill"], bar.muted_color)
-        self.assertEqual(bar.canvas.items["label1"]["text"], "kimi*")
+        self.assertEqual(bar.canvas.items["label1"]["text"], "kimi 余*")
         self.assertEqual(bar.hover_sections()[1]["error"], "network timeout")
 
     def test_missing_percent_does_not_shift_reset_onto_another_window(self):
@@ -329,6 +361,26 @@ class DisplayTests(unittest.TestCase):
 
 
 class CacheAndTimeTests(unittest.TestCase):
+    def test_quota_display_setting_survives_save_and_reload(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(app, "DATA_DIR", directory), \
+             patch.object(app, "CONFIG_PATH", str(Path(directory) / "config.json")):
+            app.save_config(dict(app.DEFAULT_CONFIG, quota_display="used"))
+            self.assertEqual(app.load_config()["quota_display"], "used")
+            app.save_config(dict(app.DEFAULT_CONFIG, quota_display="remaining"))
+            self.assertEqual(app.load_config()["quota_display"], "remaining")
+
+    def test_missing_or_invalid_display_setting_keeps_remaining_as_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for value in (None, True, "unknown", ["used"]):
+                with self.subTest(value=value), patch.object(app, "CONFIG_PATH", str(path)):
+                    path.write_text(json.dumps({"quota_display": value}), encoding="utf-8")
+                    self.assertEqual(app.load_config()["quota_display"], "remaining")
+            path.write_text("{}", encoding="utf-8")
+            with patch.object(app, "CONFIG_PATH", str(path)):
+                self.assertEqual(app.load_config()["quota_display"], "remaining")
+
     def test_refresh_timeout_is_passed_to_request(self):
         cred = session(time.time() - 100)
         with patch.object(app, "_connect_post", return_value={"accessToken": token(time.time() + 3600)}) as post, \
