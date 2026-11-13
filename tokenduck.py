@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from hover_cards import QuotaHover, make_passive_window, reset_caption
 
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -1733,25 +1733,18 @@ class TokenDuck:
             data = data or {}
             windows = _display_windows(provider, data)
             monthly = _num(data.get("used_ratio")) if provider == "kimi" else None
-            extra_month = monthly is not None and not any(w["tag"] == "月" for w in windows)
+            if monthly is not None and not any(w["tag"] == "月" for w in windows):
+                windows.append({"tag": "月", "used_percent": monthly * 100,
+                                "reset_at": data.get("reset_at")})
             plan = (data.get("plan_type") if provider == "codex" else data.get("level")
                     if provider == "kimi" else data.get("plan_name") or data.get("level")) or ""
             if provider == "codex" and plan:
                 plan = "ChatGPT " + str(plan).replace("_", " ").title()
             rows, notes = [], []
-            if extra_month:
-                summary = "月总额度%s %d%%" % (kind, quota_percent(monthly * 100, mode))
-                amount, left = _num(data.get("amount")), _num(data.get("amount_left"))
-                if amount is not None and amount > 0 and left is not None:
-                    selected = max(0, amount - left) if mode == "used" else left
-                    summary += " · %s / %s" % (_fmt_amount(selected), _fmt_amount(amount))
-                notes.append(summary)
-                monthly_reset = _num(data.get("reset_at"))
-                if monthly_reset is not None:
-                    notes.append("月额度：" + reset_caption(monthly_reset, now))
             for win in windows:
                 row = {"label": {"5h": "5 小时额度", "w": "每周额度", "月": "月总额度"}.get(
                            win["tag"], str(win["tag"]) + "额度"),
+                       "tag": win["tag"], "full_width": win["tag"] == "月",
                        "remaining": _remain(win["used_percent"]),
                        "display_percent": quota_percent(win["used_percent"], mode),
                        "reset": reset_caption(win.get("reset_at"), now)}
@@ -1774,7 +1767,12 @@ class TokenDuck:
             code_ratio = _num(data.get("code_used_ratio")) if provider == "kimi" else None
             if code_ratio is not None and code_ratio > 0:
                 # 这是消耗来源占比，不是可独立取补数的 Kimi Code 额度。
-                notes.append("其中 Kimi Code 消耗月总额度的 %d%%" % round(code_ratio * 100))
+                attribution = "其中 Kimi Code 消耗月总额度的 %d%%" % round(code_ratio * 100)
+                month_row = next((row for row in rows if row["tag"] == "月"), None)
+                if month_row is not None:
+                    month_row["footnote"] = attribution
+                else:
+                    notes.append(attribution)
             until = _num(data.get("until")) if provider == "zcode" else None
             if until is not None:
                 try:
@@ -2571,6 +2569,22 @@ def self_check():
                 all(bar.canvas.itemcget(item, "text") == "0%" for item in bar.seg_texts[1]) and
                 all(row["value"].cget("text") == "0%" and row["display_percent"] == 0
                     for row in card.quota_rows if row["provider"] == "kimi"))
+            bar.kimi_data.update({"used_ratio": .25, "amount": 1000000, "amount_left": 750000,
+                                  "code_used_ratio": .1})
+            bar.render()
+            monthly_rows = [row for row in card.quota_rows if row["provider"] == "kimi" and row["tag"] == "月"]
+            primary_rows = [row for row in card.quota_rows if row["provider"] == "kimi" and row["tag"] != "月"]
+            report["monthly_quota_has_progress"] = (len(monthly_rows) == 1 and
+                monthly_rows[0]["value"].cget("text") == "25%" and
+                len(monthly_rows[0]["progress"].find_all()) == 2)
+            report["monthly_quota_spans_full_width"] = (bool(monthly_rows) and bool(primary_rows) and
+                int(monthly_rows[0]["progress"].cget("width")) >
+                int(primary_rows[0]["progress"].cget("width")) * 1.8)
+            bar.cfg["quota_display"] = "remaining"
+            bar.render()
+            report["monthly_mode_switch_consistent"] = all(
+                row["value"].cget("text") == "75%" for row in card.quota_rows
+                if row["provider"] == "kimi" and row["tag"] == "月")
             bar.on_left_click(None)
             report["left_click_closes_pinned_hover"] = bar._tip is None and not bar._tip_pinned
         finally:
@@ -2580,7 +2594,9 @@ def self_check():
                                                "taskbar_icon_hidden", "taskbar_does_not_activate", "hover_full_quota_visible",
                                                "hover_does_not_activate", "hover_taskbar_icon_hidden",
                                                "hover_updates_in_place", "left_click_pins_without_redraw",
-                                               "used_display_consistent", "left_click_closes_pinned_hover"))
+                                               "used_display_consistent", "left_click_closes_pinned_hover",
+                                               "monthly_quota_has_progress", "monthly_quota_spans_full_width",
+                                               "monthly_mode_switch_consistent"))
     except Exception as e:
         report["error"] = type(e).__name__ + ": " + str(e)
     os.makedirs(DATA_DIR, exist_ok=True)

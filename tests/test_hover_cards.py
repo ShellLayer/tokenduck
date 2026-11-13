@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import tokenduck as app
-from hover_cards import fit_popup, reset_caption
+from hover_cards import fit_popup, quota_layout, reset_caption
 
 
 def sample_bar():
@@ -41,14 +41,17 @@ class HoverModelTests(unittest.TestCase):
         self.assertEqual([s["windows"][0]["remaining"] for s in sections], [80, 100, 5])
         self.assertTrue(all(s["display_mode"] == "used" for s in sections))
 
-    def test_used_mode_converts_monthly_summary_and_count_values(self):
+    def test_used_mode_converts_monthly_progress_and_count_values(self):
         bar = sample_bar()
         bar.cfg = dict(app.DEFAULT_CONFIG, quota_display="used")
         bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}, {"tag": "w", "used_percent": 25}],
                          "used_ratio": .15, "amount": 100000, "amount_left": 85000}
         kimi = bar.hover_sections(now=1000)[1]
-        self.assertIn("月总额度已用 15%", kimi["notes"][0])
-        self.assertIn("1.5万 / 10万", kimi["notes"][0])
+        self.assertEqual(len(kimi["windows"]), 3)
+        row = kimi["windows"][2]
+        self.assertEqual(row["display_percent"], 15)
+        self.assertEqual(row["detail"], "已用 1.5万 / 10万")
+        self.assertTrue(row["full_width"])
         bar.kimi_data["windows"] = []
         row = bar.hover_sections(now=1000)[1]["windows"][0]
         self.assertEqual(row["display_percent"], 15)
@@ -93,14 +96,47 @@ class HoverModelTests(unittest.TestCase):
         self.assertEqual(len(sections[1]["windows"]), 1)
         self.assertEqual(sections[0]["windows"], [])
 
-    def test_two_primary_windows_keep_monthly_balance_in_summary(self):
+    def test_two_primary_windows_show_monthly_balance_as_a_separate_meter(self):
         bar = sample_bar()
         bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}, {"tag": "w", "used_percent": 25}],
                          "used_ratio": .15, "amount": 100000, "amount_left": 85000}
         kimi = bar.hover_sections(now=1000)[1]
-        self.assertEqual(len(kimi["windows"]), 2)
-        self.assertIn("月总额度剩余 85%", kimi["notes"][0])
-        self.assertIn("8.5万 / 10万", kimi["notes"][0])
+        self.assertEqual(len(kimi["windows"]), 3)
+        row = kimi["windows"][2]
+        self.assertEqual(row["label"], "月总额度")
+        self.assertEqual(row["display_percent"], 85)
+        self.assertEqual(row["detail"], "剩余 8.5万 / 10万")
+        self.assertTrue(row["full_width"])
+        self.assertFalse(any("月总额度" in note for note in kimi["notes"]))
+
+    def test_explicit_monthly_window_is_not_duplicated_by_monthly_ratio(self):
+        bar = sample_bar()
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0},
+                                     {"tag": "月", "used_percent": 15}], "used_ratio": .15}
+        windows = bar.hover_sections(now=1000)[1]["windows"]
+        self.assertEqual(sum(w["tag"] == "月" for w in windows), 1)
+
+    def test_unknown_monthly_usage_does_not_create_a_full_or_empty_meter(self):
+        bar = sample_bar()
+        for value in (None, float("nan"), True):
+            with self.subTest(value=value):
+                bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0},
+                                             {"tag": "w", "used_percent": 25}], "used_ratio": value}
+                self.assertFalse(any(w["tag"] == "月" for w in bar.hover_sections(now=1000)[1]["windows"]))
+
+    def test_code_consumption_is_monthly_attribution_not_an_independent_allowance(self):
+        bar = sample_bar()
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}, {"tag": "w", "used_percent": 25}],
+                         "used_ratio": .2, "code_used_ratio": .05}
+        for mode, percent in (("remaining", 80), ("used", 20)):
+            with self.subTest(mode=mode):
+                bar.cfg = dict(app.DEFAULT_CONFIG, quota_display=mode)
+                section = bar.hover_sections(now=1000)[1]
+                self.assertEqual(len(section["windows"]), 3)
+                monthly = next(w for w in section["windows"] if w["tag"] == "月")
+                self.assertEqual(monthly["display_percent"], percent)
+                self.assertIn("消耗月总额度的 5%", monthly["footnote"])
+                self.assertFalse(any("Kimi Code" in note for note in section["notes"]))
 
     def test_monthly_only_quota_has_its_own_progress_and_amount(self):
         bar = sample_bar()
@@ -138,6 +174,23 @@ class HoverModelTests(unittest.TestCase):
         bar._pointer_in_hover.return_value = False
         bar._close_tip_if_outside()
         bar.hide_tip.assert_called_once()
+
+
+class QuotaLayoutTests(unittest.TestCase):
+    def test_primary_windows_are_paired_and_monthly_total_spans_both_columns(self):
+        windows = [{"tag": "5h"}, {"tag": "w"}, {"tag": "月", "full_width": True}]
+        columns, cells = quota_layout(windows)
+        self.assertEqual(columns, 2)
+        self.assertEqual([(w["tag"], row, col, span) for w, row, col, span in cells],
+                         [("5h", 0, 0, 1), ("w", 0, 1, 1), ("月", 1, 0, 2)])
+
+    def test_single_window_and_monthly_only_layouts_use_full_width(self):
+        for windows in ([{"tag": "月", "full_width": True}],
+                        [{"tag": "w"}, {"tag": "月", "full_width": True}]):
+            with self.subTest(windows=windows):
+                columns, cells = quota_layout(windows)
+                self.assertEqual(columns, 1)
+                self.assertTrue(all(col == 0 and span == 1 for _, _, col, span in cells))
 
 
 class HoverPlacementTests(unittest.TestCase):

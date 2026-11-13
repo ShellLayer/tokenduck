@@ -24,6 +24,8 @@ The default is **remaining** allowance. Choose **剩余额度** (remaining) or *
 
 The hover flyout uses provider cards with side-by-side quota bars, reset times, plans and update status. It follows the light or dark theme, stays open when the pointer enters it, and scrolls when the monitor has limited space.
 
+Kimi's monthly total has a separate full-width progress bar below the short-term windows. Counts and reset details sit under the bar; it follows the selected remaining/used display mode. Expiry and update details share a compact footer.
+
 ## Account connections
 
 | Service | Connection |

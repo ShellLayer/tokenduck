@@ -37,6 +37,8 @@ python tokenduck.py --self-check
 
 需要在现有程序运行时构建候选版本，可使用 `./build.ps1 -OutputDirectory build/candidate`，验证后再替换正在使用的版本。
 
+`python tools/check_hover_layout.py` 使用透明测试窗口检查真实 Tk 布局，包括月总额度跨列、文字与数字间距、进度条边界和高缩放滚动。全部使用合成数据，不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
+
 加密文件头、凭证锁和单实例标记中的旧名称是兼容格式，不能直接替换。旧用户原地复用已有数据目录；新安装使用 TokenDuck 目录，不自动搬移或重新加密账号。
 
 ## 发布

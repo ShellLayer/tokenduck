@@ -55,6 +55,17 @@ def fit_popup(anchor, size, workarea, gap=8):
     return int(x), int(y), int(width), int(height)
 
 
+def quota_layout(windows):
+    """Pair short windows, then give each total quota a full-width row."""
+    primary = [w for w in windows if not w.get("full_width")]
+    totals = [w for w in windows if w.get("full_width")]
+    columns = 2 if len(primary) > 1 else 1
+    cells = [(w, index // columns, index % columns, 1) for index, w in enumerate(primary)]
+    first_total = (len(primary) + columns - 1) // columns
+    cells.extend((w, first_total + index, 0, columns) for index, w in enumerate(totals))
+    return columns, cells
+
+
 def monitor_workarea(owner):
     try:
         class MonitorInfo(ctypes.Structure):
@@ -173,7 +184,7 @@ class QuotaHover(tk.Toplevel):
         p = self.palette
         self.workarea = workarea
         margin = self.px(14)
-        width = min(self.px(380), self.workarea[2] - self.workarea[0] - self.px(16))
+        width = min(self.px(400), self.workarea[2] - self.workarea[0] - self.px(16))
         inner_width = max(self.px(180), width - 2 * margin)
         self.content = tk.Frame(self.shell, bg=p["shell"])
         content_window = self.shell.create_window(margin, margin, window=self.content, width=inner_width, anchor="nw")
@@ -275,28 +286,32 @@ class QuotaHover(tk.Toplevel):
         identity.pack(side="left", fill="x", expand=True)
         grid = tk.Frame(inside, bg=p["card"])
         grid.pack(fill="x", pady=(self.px(12), 0) if has_windows else 0)
-        columns = 2 if len(section["windows"]) > 1 else 1
+        columns, cells = quota_layout(section["windows"])
         gutter = self.px(16) if columns == 2 else 0
         quota_width = (width - 2*pad - gutter) // columns
         for column in range(columns):
             grid.columnconfigure(column, weight=1, uniform="quota")
-        for index, win in enumerate(section["windows"]):
+        for win, row_index, column, span in cells:
             row = tk.Frame(grid, bg=p["card"])
-            column = index % columns
-            row.grid(row=index // columns, column=column, sticky="nsew",
-                     padx=(0 if column == 0 else gutter // 2, gutter // 2 if column == 0 and columns > 1 else 0),
-                     pady=(0 if index < columns else self.px(12), 0))
+            wide = span == columns
+            meter_width = width - 2*pad if wide else quota_width
+            row.grid(row=row_index, column=column, columnspan=span, sticky="nsew",
+                     padx=0 if wide else (0 if column == 0 else gutter // 2, gutter // 2 if column == 0 else 0),
+                     pady=(self.px(12) if row_index else 0, 0))
+            if win.get("full_width") and row_index:
+                tk.Frame(row, bg=p["border"], height=1).pack(fill="x", pady=(0, self.px(10)))
             title = tk.Frame(row, bg=p["card"])
             title.pack(fill="x")
-            self.label(title, win["label"], 8, color=p["quiet"]).pack(side="left")
+            self.label(title, win["label"], 9 if win.get("full_width") else 8,
+                       "bold" if win.get("full_width") else "normal", color=p["quiet"]).pack(side="left")
             remaining = win["remaining"]
             display_percent = win.get("display_percent", remaining)
             bar_color = p["muted"] if stale else p["danger"] if remaining <= 10 else p["warn"] if remaining <= 25 else color
             value = self.label(title, "%d%%" % display_percent, 12, "bold", color=p["muted"] if stale else p["text"])
             value.pack(side="right")
-            progress = tk.Canvas(row, height=self.px(6), bg=p["card"], bd=0, highlightthickness=0)
+            progress = tk.Canvas(row, width=meter_width, height=self.px(6), bg=p["card"], bd=0, highlightthickness=0)
             progress.pack(fill="x", pady=(self.px(5), self.px(5)))
-            progress_width = quota_width
+            progress_width = meter_width
             radius = self.px(3)
             progress.create_line(radius, radius, progress_width-radius, radius,
                                  fill=p["track"], width=self.px(5), capstyle="round")
@@ -304,19 +319,36 @@ class QuotaHover(tk.Toplevel):
                 progress.create_line(radius, radius, max(radius + 0.1, (progress_width-2*radius)*display_percent/100+radius), radius,
                                      fill=bar_color, width=self.px(5), capstyle="round")
             reset_parts = win["reset"].split(" · ", 1)
-            self.label(row, reset_parts[0], 8, color=p["muted"],
-                       wraplength=quota_width, justify="left").pack(anchor="w")
-            if len(reset_parts) > 1:
-                exact = reset_parts[1]
-                self.label(row, ("重置于 " if exact[0].isdigit() else "") + exact, 8,
-                           color=p["muted"], wraplength=quota_width, justify="left").pack(anchor="w", pady=(self.px(2), 0))
-            if win.get("detail"):
-                self.label(row, win["detail"], 8, color=p["muted"]).pack(anchor="w", pady=(self.px(2), 0))
+            if win.get("full_width"):
+                meta = tk.Frame(row, bg=p["card"])
+                meta.pack(fill="x")
+                meta.columnconfigure(0, weight=1)
+                meta.columnconfigure(1, weight=1)
+                if win.get("detail"):
+                    self.label(meta, win["detail"], 8, color=p["muted"], justify="left",
+                               wraplength=meter_width // 2).grid(row=0, column=0, sticky="nw")
+                self.label(meta, "\n".join(reset_parts), 8, color=p["muted"], justify="right",
+                           wraplength=meter_width // 2).grid(row=0, column=1, sticky="ne")
+                if win.get("footnote"):
+                    self.label(row, win["footnote"], 8, color=p["muted"], justify="left",
+                               wraplength=meter_width).pack(anchor="w", pady=(self.px(5), 0))
+            else:
+                self.label(row, reset_parts[0], 8, color=p["muted"],
+                           wraplength=meter_width, justify="left").pack(anchor="w")
+                if len(reset_parts) > 1:
+                    exact = reset_parts[1]
+                    self.label(row, ("重置于 " if exact[0].isdigit() else "") + exact, 8,
+                               color=p["muted"], wraplength=meter_width, justify="left").pack(anchor="w", pady=(self.px(2), 0))
+                if win.get("detail"):
+                    self.label(row, win["detail"], 8, color=p["muted"], justify="left",
+                               wraplength=meter_width).pack(anchor="w", pady=(self.px(2), 0))
             self.quota_rows.append({"provider": section["id"], "value": value, "row": row,
-                                    "progress": progress, "display_percent": display_percent})
+                                    "progress": progress, "display_percent": display_percent,
+                                    "tag": win.get("tag"), "full_width": bool(win.get("full_width"))})
         if not has_windows:
             self.label(inside, "暂未获取到额度", 9, color=p["muted"]).pack(anchor="w", pady=(self.px(12), self.px(2)))
-        for note in section.get("notes", []):
+        notes = section.get("notes", [])
+        for note in notes if stale else notes[:-1]:
             self.label(inside, note, 8, color=p["muted"], justify="left",
                        wraplength=width - 2*pad).pack(anchor="w", pady=(self.px(7), 0))
         if stale:
@@ -325,8 +357,21 @@ class QuotaHover(tk.Toplevel):
                 error = error[:117] + "…"
             self.label(inside, error, 8, color=p["warn"], justify="left",
                        wraplength=width - 2*pad).pack(anchor="w", pady=(self.px(8), 0))
-        if section.get("updated"):
+        if stale and section.get("updated"):
             self.label(inside, section["updated"], 8, color=p["muted"]).pack(anchor="w", pady=(self.px(9), 0))
+        elif not stale and (notes or section.get("updated")):
+            meta = tk.Frame(inside, bg=p["card"])
+            meta.pack(fill="x", pady=(self.px(9), 0))
+            meta.columnconfigure(0, weight=1)
+            note_width = width - 2*pad
+            if section.get("updated"):
+                stamp = section["updated"].rsplit(" ", 1)[-1]
+                label = self.label(meta, "更新 " + stamp, 8, color=p["muted"])
+                label.grid(row=0, column=1, sticky="ne", padx=(self.px(10), 0))
+                note_width -= label.winfo_reqwidth() + self.px(10)
+            if notes:
+                self.label(meta, notes[-1], 8, color=p["muted"], justify="left",
+                           wraplength=max(self.px(80), note_width)).grid(row=0, column=0, sticky="nw")
         inside.update_idletasks()
         height = inside.winfo_reqheight() + 2*pad
         outer.configure(height=height)

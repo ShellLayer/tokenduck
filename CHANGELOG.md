@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 — 2026-11-13
+
+- Promoted Kimi's monthly total from a text note to a separate full-width progress bar below the paired short-term windows.
+- Grouped count, reset and Kimi Code consumption details with their monthly quota; preserved remaining/used mode and stale-reading behavior.
+- Widened the flyout slightly and combined healthy update/expiry metadata into compact card footers.
+- Added monthly-meter regressions, packaged checks and real Tk layout validation without screen capture.
+
 ## 0.3.2 — 2026-11-13
 
 - Added a persisted remaining/used display setting, applied to taskbar numbers, flyout numbers, bar fill and convertible monthly counts.
