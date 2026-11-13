@@ -17,6 +17,48 @@ def sample_bar():
 
 
 class HoverModelTests(unittest.TestCase):
+    def test_glm_full_capacity_without_reset_has_state_in_both_modes(self):
+        win = {"tag": "5h", "used_percent": 0, "reset_at": None, "amount": 100, "amount_left": 100}
+        for mode, expected in (("remaining", "已满"), ("used", "未用")):
+            short, caption, _ = app.quota_timing("zcode", win, mode, now=1000)
+            self.assertEqual(short, expected)
+            self.assertIn("消耗 5 小时后恢复", caption)
+            self.assertIsNone(win["reset_at"])
+
+    def test_glm_partial_and_rounded_zero_usage_do_not_invent_a_reset(self):
+        for percent in (25, 0):
+            win = {"tag": "5h", "used_percent": percent, "reset_at": None, "amount": 1000, "amount_left": 999}
+            short, caption, _ = app.quota_timing("zcode", win, now=1000)
+            self.assertEqual(short, "滚动")
+            self.assertIn("暂无精确恢复时间", caption)
+            self.assertIsNone(win["reset_at"])
+
+    def test_glm_stale_or_elapsed_recovery_waits_for_refresh(self):
+        for stale, reset in ((True, None), (False, 900)):
+            short, caption, _ = app.quota_timing("zcode", {"tag": "5h", "used_percent": 0, "reset_at": reset},
+                                                 stale=stale, now=1000)
+            self.assertEqual(short, "待刷新")
+            self.assertIn("等待刷新", caption)
+
+    def test_glm_exact_recovery_time_and_weekly_reset_keep_their_meanings(self):
+        win = {"tag": "5h", "used_percent": 25, "reset_at": 4600}
+        short, caption, label = app.quota_timing("zcode", win, now=1000)
+        self.assertEqual(short, "1h0m")
+        self.assertIn("后恢复", caption)
+        self.assertEqual(label, "恢复于 ")
+        short, caption, label = app.quota_timing("zcode", dict(win, tag="w"), now=1000)
+        self.assertEqual(short, "1h0m")
+        self.assertIn("后重置", caption)
+        self.assertEqual(label, "重置于 ")
+
+    def test_glm_hover_explains_missing_5h_time_without_losing_weekly_time(self):
+        bar = sample_bar()
+        bar.zcode_data = {"windows": [{"tag": "5h", "used_percent": 0},
+                                      {"tag": "w", "used_percent": 20, "reset_at": 4600}]}
+        rows = bar.hover_sections(now=1000)[2]["windows"]
+        self.assertIn("余量已满", rows[0]["reset"])
+        self.assertIn("后重置", rows[1]["reset"])
+
     def test_right_click_explicitly_activates_the_native_wrapper_for_menu_input(self):
         bar = sample_bar()
         bar.root = Mock()

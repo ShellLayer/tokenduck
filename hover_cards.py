@@ -337,7 +337,7 @@ class QuotaHover(tk.Toplevel):
                            wraplength=meter_width, justify="left").pack(anchor="w")
                 if len(reset_parts) > 1:
                     exact = reset_parts[1]
-                    self.label(row, ("重置于 " if exact[0].isdigit() else "") + exact, 8,
+                    self.label(row, (win.get("reset_label", "重置于 ") if exact[0].isdigit() else "") + exact, 8,
                                color=p["muted"], wraplength=meter_width, justify="left").pack(anchor="w", pady=(self.px(2), 0))
                 if win.get("detail"):
                     self.label(row, win["detail"], 8, color=p["muted"], justify="left",

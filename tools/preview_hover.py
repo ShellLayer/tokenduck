@@ -25,7 +25,7 @@ def sample_sections(stale=False, mode="remaining"):
         {"tag": "w", "used_percent": 0, "reset_at": now+527000}],
         "used_ratio": 0.15, "amount": 10000000, "amount_left": 8500000}
     bar.zcode_data = {"plan_name": "GLM Coding Plan · Pro", "windows": [
-        {"tag": "5h", "used_percent": 24, "reset_at": now+12600},
+        {"tag": "5h", "used_percent": 24},
         {"tag": "w", "used_percent": 9, "reset_at": now+440000}], "until": now+86400*22}
     bar.error = bar.zcode_error = None
     bar.kimi_error = "网络暂时不可用，当前显示上次记录" if stale else None

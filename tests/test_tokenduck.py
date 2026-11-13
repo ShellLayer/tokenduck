@@ -252,6 +252,31 @@ def bare_bar():
 
 
 class DisplayTests(unittest.TestCase):
+    def test_glm_full_state_and_weekly_countdown_both_remain_visible(self):
+        for mode, expected in (("remaining", "已满"), ("used", "未用")):
+            bar = bare_bar()
+            bar.cfg["quota_display"] = mode
+            bar.zcode_data = {"windows": [{"tag": "5h", "used_percent": 0},
+                                          {"tag": "w", "used_percent": 20, "reset_at": time.time()+7200}]}
+            with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
+                bar.render()
+            self.assertEqual(bar.canvas.items["cd2-0"]["text"], expected)
+            self.assertEqual(bar.canvas.items["cd2-0"]["state"], "normal")
+            self.assertEqual(bar.canvas.items["cd2-1"]["state"], "normal")
+            self.assertIn("h", bar.canvas.items["cd2-1"]["text"])
+
+    def test_glm_missing_recovery_shows_rolling_or_stale_state(self):
+        for error, expected in ((None, "滚动"), ("offline", "待刷新")):
+            bar = bare_bar()
+            bar.zcode_data = {"windows": [{"tag": "5h", "used_percent": 25}]}
+            bar.zcode_error = error
+            with patch.object(app.ctypes, "windll", type("DLL", (), {"user32": User32()})()):
+                bar.render()
+            self.assertEqual(bar.canvas.items["cd2-0"]["text"], expected)
+            self.assertEqual(bar.canvas.items["cd2-0"]["state"], "normal")
+            if error:
+                self.assertEqual(bar.canvas.items["cd2-0"]["fill"], bar.muted_color)
+
     def test_used_mode_changes_visible_number_and_bar_fill_together(self):
         bar = bare_bar()
         bar.cfg["quota_display"] = "used"
@@ -361,6 +386,17 @@ class DisplayTests(unittest.TestCase):
 
 
 class CacheAndTimeTests(unittest.TestCase):
+    def test_glm_monitor_can_omit_5h_reset_while_reporting_weekly_reset(self):
+        reset = time.time()+86400
+        monitor = {"code": 200, "data": {"limits": [
+            {"unit": 3, "number": 5, "percentage": 0, "usage": 100, "currentValue": 0, "remaining": 100},
+            {"unit": 6, "number": 1, "percentage": 20, "nextResetTime": reset*1000}]}}
+        with patch.object(app, "_zcode_api_key", return_value=("synthetic", "https://example.invalid")), \
+             patch.object(app, "_urlopen", side_effect=[io.StringIO(json.dumps(monitor)), io.StringIO('{"data":[]}' )]):
+            windows, _, _, _ = app._fetch_zcode_monitor()
+        self.assertIsNone(windows[0]["reset_at"])
+        self.assertAlmostEqual(windows[1]["reset_at"], reset)
+
     def test_quota_display_setting_survives_save_and_reload(self):
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(app, "DATA_DIR", directory), \

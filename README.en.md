@@ -26,6 +26,8 @@ The hover flyout uses provider cards with side-by-side quota bars, reset times, 
 
 Kimi's monthly total has a separate full-width progress bar below the short-term windows. Counts and reset details sit under the bar; it follows the selected remaining/used display mode. Expiry and update details share a compact footer.
 
+GLM's 5-hour quota recovers dynamically. If the API omits the next recovery time, the taskbar shows **已满** (full), **未用** (unused in used mode), or **滚动** (rolling recovery). Stale readings without a precise time show **待刷新**. A recovery countdown is shown only when an exact timestamp is supplied.
+
 ## Account connections
 
 | Service | Connection |

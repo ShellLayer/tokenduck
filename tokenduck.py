@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from hover_cards import QuotaHover, make_passive_window, reset_caption
 
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -1307,9 +1307,9 @@ def fmt_countdown(reset_at):
     return "%dm" % m
 
 
-def fmt_countdown_short(reset_at):
+def fmt_countdown_short(reset_at, now=None):
     """精确到分钟：≤1h→45m，≤1d→2h30m，>1d→5d12h。"""
-    secs = max(0, int(reset_at - time.time()))
+    secs = max(0, int(reset_at - (time.time() if now is None else now)))
     d, secs = divmod(secs, 86400)
     h, secs = divmod(secs, 3600)
     m = secs // 60
@@ -1335,6 +1335,34 @@ def quota_percent(used_percent, mode="remaining"):
         return "?"
     value = used if mode == "used" else 100 - used
     return max(0, min(100, int(round(value))))
+
+
+def quota_timing(provider, window, mode="remaining", stale=False, now=None):
+    """Return taskbar text, detail caption and date label without inventing a reset."""
+    now = time.time() if now is None else now
+    reset = _num(window.get("reset_at"))
+    rolling = provider == "zcode" and window.get("tag") == "5h"
+    date_label = "恢复于 " if rolling else "重置于 "
+    if reset is not None and reset > now:
+        caption = reset_caption(reset, now)
+        if rolling:
+            caption = caption.replace("后重置", "后恢复")
+        return fmt_countdown_short(reset, now), caption, date_label
+    if rolling:
+        if stale:
+            return "待刷新", "上次记录 · 等待刷新", date_label
+        if reset is not None and reset > 0:
+            return "待刷新", "恢复时间已到 · 等待刷新", date_label
+        unused = _num(window.get("used_percent")) == 0
+        amount, left = _num(window.get("amount")), _num(window.get("amount_left"))
+        if amount is not None and amount > 0 and left is not None:
+            unused = unused and left >= amount
+        if unused:
+            state = "未用" if mode == "used" else "已满"
+            caption = "当前未用" if mode == "used" else "余量已满"
+            return state, caption + " · 消耗 5 小时后恢复", date_label
+        return "滚动", "滚动恢复 · 暂无精确恢复时间", date_label
+    return "", reset_caption(reset, now), date_label
 
 
 def _fmt_amount(n):
@@ -1742,12 +1770,13 @@ class TokenDuck:
                 plan = "ChatGPT " + str(plan).replace("_", " ").title()
             rows, notes = [], []
             for win in windows:
+                _, timing, date_label = quota_timing(provider, win, mode, bool(error), now)
                 row = {"label": {"5h": "5 小时额度", "w": "每周额度", "月": "月总额度"}.get(
                            win["tag"], str(win["tag"]) + "额度"),
                        "tag": win["tag"], "full_width": win["tag"] == "月",
                        "remaining": _remain(win["used_percent"]),
                        "display_percent": quota_percent(win["used_percent"], mode),
-                       "reset": reset_caption(win.get("reset_at"), now)}
+                       "reset": timing, "reset_label": date_label}
                 amount, left = _num(win.get("amount")), _num(win.get("amount_left"))
                 if win["tag"] == "月":
                     if provider == "kimi":
@@ -1824,12 +1853,13 @@ class TokenDuck:
                     ("zcode", self.zcode_data))]
         self.seg_remains = [[max(0, min(100, 100 - w["used_percent"])) for w in wins]
                             or [None] for wins in display]
+        self.seg_windows = display
         self.seg_resets = [[w.get("reset_at") for w in wins] or [None]
                            for wins in display]
         # 100% 比两位余量更宽；按实际字体和 DPI 量宽，避免与倒计时重叠。
         seg_w = max(70, self.font_seg.measure("100%") +
                     max(self.font_cd.measure("23h59m"),
-                        self.font_cd.measure("31d23h")) + 6)
+                        self.font_cd.measure("31d23h"), self.font_cd.measure("待刷新")) + 6)
         bars_zone = seg_w * 2 + 3
         self.bars_zone = bars_zone
         self.seg_w = seg_w
@@ -1916,7 +1946,6 @@ class TokenDuck:
                 # 标签永远占位；main/timer 老三件套隐藏（信息已按窗口拆进槽内）
                 self.canvas.itemconfig(main_item, state="hidden")
                 self.canvas.itemconfig(timer_item, state="hidden")
-                resets = self.seg_resets[i] if i < len(self.seg_resets) else []
                 avail = [r for r in rems if r is not None]
                 if not avail:
                     # 无数据：main 文字兜底显示 "--"
@@ -1955,12 +1984,13 @@ class TokenDuck:
                     self.canvas.itemconfig(
                         pct_item, text="%d%%" % value, state="normal",
                         fill=text_fill)
-                    rst = resets[j] if j < len(resets) else None
-                    if rst and rst > time.time():
-                        left = rst - time.time()
+                    windows = self.seg_windows[i]
+                    timing, _, _ = quota_timing(("codex", "kimi", "zcode")[i], windows[j],
+                                                 self.quota_display(), stale)
+                    if timing:
                         self.canvas.coords(cd_item, sx1, y_txt)
                         self.canvas.itemconfig(
-                            cd_item, text=fmt_countdown_short(rst),
+                            cd_item, text=timing,
                             state="normal", fill=text_fill)
                     else:
                         self.canvas.itemconfig(cd_item, state="hidden")
@@ -2585,6 +2615,24 @@ def self_check():
             report["monthly_mode_switch_consistent"] = all(
                 row["value"].cget("text") == "75%" for row in card.quota_rows
                 if row["provider"] == "kimi" and row["tag"] == "月")
+            bar.zcode_data = {"windows": [
+                {"tag": "5h", "used_percent": 0, "amount": 100, "amount_left": 100},
+                {"tag": "w", "used_percent": 25, "reset_at": time.time()+7200}]}
+            bar.render()
+            report["glm_full_state_visible"] = bar.canvas.itemcget(bar.seg_timers[2][0], "text") == "已满"
+            bar.cfg["quota_display"] = "used"
+            bar.render()
+            report["glm_unused_state_visible"] = bar.canvas.itemcget(bar.seg_timers[2][0], "text") == "未用"
+            bar.zcode_data["windows"][0].update({"used_percent": 25, "amount_left": 75})
+            bar.render()
+            report["glm_rolling_state_visible"] = bar.canvas.itemcget(bar.seg_timers[2][0], "text") == "滚动"
+            bar.cfg["quota_display"] = "remaining"
+            bar.zcode_data["windows"][0].update({"used_percent": 0, "amount_left": 100})
+            bar.zcode_error = "synthetic stale reading"
+            bar.render()
+            pct_item, time_item = bar.seg_texts[2][0], bar.seg_timers[2][0]
+            report["glm_stale_time_state_visible"] = bar.canvas.itemcget(time_item, "text") == "待刷新"
+            report["glm_time_text_does_not_overlap"] = bar.canvas.bbox(pct_item)[2] + 2 <= bar.canvas.bbox(time_item)[0]
             bar.on_left_click(None)
             report["left_click_closes_pinned_hover"] = bar._tip is None and not bar._tip_pinned
         finally:
@@ -2596,7 +2644,9 @@ def self_check():
                                                "hover_updates_in_place", "left_click_pins_without_redraw",
                                                "used_display_consistent", "left_click_closes_pinned_hover",
                                                "monthly_quota_has_progress", "monthly_quota_spans_full_width",
-                                               "monthly_mode_switch_consistent"))
+                                               "monthly_mode_switch_consistent", "glm_full_state_visible",
+                                               "glm_unused_state_visible", "glm_rolling_state_visible",
+                                               "glm_stale_time_state_visible", "glm_time_text_does_not_overlap"))
     except Exception as e:
         report["error"] = type(e).__name__ + ": " + str(e)
     os.makedirs(DATA_DIR, exist_ok=True)

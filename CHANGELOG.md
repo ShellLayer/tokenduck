@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 — 2026-11-13
+
+- Explained GLM's rolling 5-hour recovery when its API omits a precise timestamp, replacing blank taskbar time slots with full/unused, rolling, or waiting-for-refresh states.
+- Kept exact provider timestamps as countdowns and distinguished recovery times from fixed reset times in the flyout.
+- Avoided treating a rounded 0% usage as full capacity when available counts indicate consumption.
+- Added monitor-response, display, stale-state and native text-spacing regressions without screen capture.
+
 ## 0.3.3 — 2026-11-13
 
 - Promoted Kimi's monthly total from a text note to a separate full-width progress bar below the paired short-term windows.
