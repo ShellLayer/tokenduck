@@ -2,7 +2,7 @@
 
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import tokenduck as app
 from hover_cards import fit_popup, reset_caption
@@ -17,6 +17,19 @@ def sample_bar():
 
 
 class HoverModelTests(unittest.TestCase):
+    def test_right_click_explicitly_activates_the_native_wrapper_for_menu_input(self):
+        bar = sample_bar()
+        bar.root = Mock()
+        bar.root.winfo_id.return_value = 12
+        bar.hide_tip, bar._kick_lift = Mock(), Mock()
+        bar.autostart_var, bar.menu = Mock(), Mock()
+        bar.autostart_enabled = Mock(return_value=False)
+        native = Mock()
+        with patch.object(app, "make_passive_window", return_value=(native, 4096)):
+            bar.show_menu(Mock(x_root=100, y_root=200))
+        native.SetForegroundWindow.assert_called_once_with(4096)
+        bar.menu.tk_popup.assert_called_once_with(100, 200)
+
     def test_used_mode_changes_all_provider_percentages_without_altering_health(self):
         bar = sample_bar()
         bar.cfg = dict(app.DEFAULT_CONFIG, quota_display="used")

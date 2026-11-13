@@ -2102,7 +2102,11 @@ class TokenDuck:
         self.autostart_var.set(self.autostart_enabled())
         try:
             # 先把本窗口设为前台：菜单才能压在最上层，且点别处能正常收起
-            ctypes.windll.user32.SetForegroundWindow(self.root.winfo_id())
+            native, wrapper = make_passive_window(self.root)
+            if native is not None:
+                native.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+                native.SetForegroundWindow.restype = ctypes.c_int
+                native.SetForegroundWindow(wrapper)
         except Exception:
             pass
         try:
