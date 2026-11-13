@@ -6,6 +6,7 @@ from ctypes import wintypes
 from datetime import datetime
 import math
 import tkinter as tk
+from tkinter import font as tkfont
 
 
 def number(value):
@@ -181,9 +182,16 @@ class QuotaHover(tk.Toplevel):
     def px(self, value):
         return max(1, round(value * self.scale))
 
-    def label(self, parent, text, size=8, weight="normal", color=None, **kwargs):
+    def label(self, parent, text, size=8, weight="normal", color=None, fit_width=None, **kwargs):
+        font = ("Microsoft YaHei UI", size, weight)
+        if fit_width is not None:
+            measure = tkfont.Font(root=self, font=font).measure
+            if measure(text) > fit_width:
+                while text and measure(text + "…") > fit_width:
+                    text = text[:-1]
+                text += "…"
         options = dict(bg=parent.cget("bg"), fg=color or self.palette["text"],
-                       font=("Microsoft YaHei UI", size, weight), bd=0, padx=0, pady=0)
+                       font=font, bd=0, padx=0, pady=0)
         options.update(kwargs)
         return tk.Label(parent, text=text, **options)
 
@@ -200,16 +208,11 @@ class QuotaHover(tk.Toplevel):
             self.content.destroy()
         self.shell.delete("all")
         p = self.palette
-        margin = self.px(12)
-        width = min(self.px(320), workarea[2] - workarea[0] - self.px(16))
+        margin = self.px(10)
+        width = min(self.px(260), workarea[2] - workarea[0] - self.px(16))
         self.inner_width = max(1, width - 2*margin)
         self.content = tk.Frame(self.shell, bg=p["shell"])
         self.shell.create_window(margin, margin, window=self.content, width=self.inner_width, anchor="nw")
-        header = tk.Frame(self.content, bg=p["shell"])
-        header.pack(fill="x", pady=(0, self.px(10)))
-        self.label(header, "补充信息", 10, "bold").pack(side="left")
-        kind = "已用额度" if model["display_mode"] == "used" else "剩余额度"
-        self.label(header, kind, color=p["muted"]).pack(side="right")
         self.body = tk.Frame(self.content, bg=p["shell"])
         self.body.pack(fill="x")
         self.quota_rows = []
@@ -218,39 +221,41 @@ class QuotaHover(tk.Toplevel):
         facts = tk.Frame(self.body, bg=p["shell"])
         facts.pack(fill="x")
         if model["totals"] and model["facts"]:
-            tk.Frame(facts, bg=p["border"], height=1).pack(fill="x", pady=(self.px(10), self.px(4)))
-        footer = tk.Frame(self.content, bg=p["shell"])
-        footer.pack(fill="x", pady=(self.px(10), 0))
-        self.label(footer, "移开自动收起", color=p["muted"]).pack(side="left")
-        more = self.label(footer, "任务栏右键管理", color=p["muted"])
-        more.pack(side="right")
+            tk.Frame(facts, bg=p["border"], height=1).pack(fill="x", pady=(self.px(6), 0))
         self.visible_facts = self.omitted_facts = 0
-        max_content_height = min(self.px(360), workarea[3]-workarea[1]-self.px(16)) - 2*margin
+        self.fact_labels = []
+        max_content_height = min(self.px(220), workarea[3]-workarea[1]-self.px(16)) - 2*margin
         for fact in model["facts"]:
+            lines = self._fact_lines(fact)
+            if not lines:
+                continue
             row = tk.Frame(facts, bg=p["shell"])
-            row.pack(fill="x", pady=(self.px(6), 0))
-            row.columnconfigure(0, minsize=self.px(47))
+            row.pack(fill="x", pady=(self.px(3), 0))
+            row.columnconfigure(0, minsize=self.px(40))
             row.columnconfigure(1, weight=1)
-            self.label(row, fact["title"], 9, "bold").grid(row=0, column=0, sticky="nw", padx=(0, self.px(9)))
-            self.label(row, "\n".join(fact["lines"]), color=p["warn"] if fact["error"] else p["muted"],
-                       wraplength=max(self.px(80), self.inner_width-self.px(60)), justify="left").grid(row=0, column=1, sticky="nw")
+            self.label(row, fact["title"], weight="bold").grid(row=0, column=0, sticky="nw", padx=(0, self.px(6)))
+            row_labels = []
+            for index, line in enumerate(lines):
+                label = self.label(row, line, color=p["warn"] if fact["error"] else p["muted"],
+                                   fit_width=max(1, self.inner_width-self.px(46)))
+                label.grid(row=index, column=1, sticky="nw")
+                row_labels.append(label)
             self.content.update_idletasks()
             if self.content.winfo_reqheight() > max_content_height:
                 row.destroy()
                 self.omitted_facts += 1
             else:
                 self.visible_facts += 1
-        if self.omitted_facts:
-            more.configure(text="更多详情：任务栏右键")
-        if not model["totals"] and not model["facts"]:
-            self.label(self.body, "暂无补充信息，正在等待额度更新。", color=p["muted"],
+                self.fact_labels.extend(row_labels)
+        if not model["totals"] and not self.visible_facts:
+            self.label(self.body, "暂无补充信息", color=p["muted"],
                        wraplength=self.inner_width, justify="left").pack(anchor="w")
         self.content.update_idletasks()
         height = self.content.winfo_reqheight()+2*margin
         self.placement = fit_popup(self.anchor_rect, (width, height), workarea, self.px(8))
         x,y,width,height = self.placement
         self.shell.configure(width=width, height=height)
-        background = rounded(self.shell, (1,1,width-1,height-1), self.px(12),
+        background = rounded(self.shell, (1,1,width-1,height-1), self.px(8),
                              fill=p["shell"], outline=p["border"], width=1)
         self.shell.tag_lower(background)
         self.geometry("%dx%d+%d+%d" % (width,height,max(0,x),max(0,y)))
@@ -262,18 +267,20 @@ class QuotaHover(tk.Toplevel):
         p = self.palette
         win = total["window"]
         row = tk.Frame(self.body, bg=p["shell"])
-        row.pack(fill="x", pady=(self.px(10) if index else 0,0))
+        row.pack(fill="x", pady=(self.px(6) if index else 0,0))
         title = tk.Frame(row, bg=p["shell"])
         title.pack(fill="x")
-        self.label(title, total["title"]+" 月总额度", 9, "bold").pack(side="left")
         stale = bool(total["error"])
         remaining = win["remaining"]
         percent = win.get("display_percent", remaining)
         color = p["muted"] if stale else p["danger"] if remaining<=10 else p["warn"] if remaining<=25 else total["color"]
-        value = self.label(title, "%d%%" % percent, 12, "bold", color=p["muted"] if stale else p["text"])
+        value = self.label(title, "%d%%" % percent, 10, "bold", color=p["muted"] if stale else p["text"])
         value.pack(side="right")
+        kind = "已用" if self.content_model["display_mode"] == "used" else "剩余"
+        caption = total["title"]+" 月额度 · "+kind+(" *" if stale else "")
+        self.label(title, caption, 9, "bold", fit_width=self.inner_width-value.winfo_reqwidth()-self.px(6)).pack(side="left")
         progress = tk.Canvas(row, width=self.inner_width, height=self.px(6), bg=p["shell"], bd=0, highlightthickness=0)
-        progress.pack(fill="x", pady=(self.px(5),self.px(5)))
+        progress.pack(fill="x", pady=(self.px(4),self.px(4)))
         radius = self.px(3)
         progress.create_line(radius,radius,self.inner_width-radius,radius,
                              fill=p["track"], width=self.px(5), capstyle="round")
@@ -282,33 +289,54 @@ class QuotaHover(tk.Toplevel):
                                  fill=color,width=self.px(5),capstyle="round")
         meta = tk.Frame(row,bg=p["shell"])
         meta.pack(fill="x")
-        meta.columnconfigure(0,weight=1)
-        meta.columnconfigure(1,weight=1)
-        self.label(meta,win.get("detail",""),color=p["muted"],justify="left",
-                   wraplength=self.inner_width//2).grid(row=0,column=0,sticky="nw")
+        detail = win.get("detail", "").removeprefix(kind+" ")
         reset_parts = win["reset"].split(" · ",1)
-        timing = (win.get("reset_label","重置于 ")+reset_parts[1]
-                  if len(reset_parts)>1 and reset_parts[1][0].isdigit() else win["reset"])
-        self.label(meta,timing,color=p["muted"],justify="right",
-                   wraplength=self.inner_width//2).grid(row=0,column=1,sticky="ne")
-        if win.get("footnote"):
-            self.label(row,win["footnote"],color=p["muted"],justify="left",
-                       wraplength=self.inner_width).pack(anchor="w",pady=(self.px(4),0))
-        plan = total.get("plan","")
-        stamp = total.get("updated","")
-        if stamp and not stale:
-            stamp = "更新 "+stamp.rsplit(" ",1)[-1][:5]
+        if len(reset_parts)>1 and reset_parts[1] and reset_parts[1][0].isdigit():
+            timing = reset_parts[1][:5]+" 重置"
+        elif "未提供" in win["reset"]:
+            timing = "重置时间未知"
+        elif "等待刷新" in win["reset"]:
+            timing = "待刷新"
         else:
-            stamp = ""
-        if plan or stamp:
-            note = tk.Frame(row,bg=p["shell"])
-            note.pack(fill="x",pady=(self.px(5),0))
-            if stamp:
-                self.label(note,stamp,color=p["muted"]).pack(side="right")
-            self.label(note,plan,color=p["muted"],wraplength=max(1,self.inner_width-self.px(80)),
-                       justify="left").pack(side="left")
+            timing = win["reset"]
+        timing_label = self.label(meta,timing,color=p["muted"],fit_width=self.inner_width//2)
+        timing_label.pack(side="right")
+        detail_label = self.label(meta,detail,color=p["muted"],
+                                 fit_width=self.inner_width-timing_label.winfo_reqwidth()-self.px(6))
+        detail_label.pack(side="left")
+        plan = self._short_plan(total["id"], total.get("plan", ""))
+        footnote = win.get("footnote", "").replace("其中 Kimi Code 消耗月总额度的 ", "其中 Code 已用")
+        note = " · ".join(part for part in (plan, footnote) if part)
+        if note:
+            self.label(row,note,color=p["muted"],fit_width=self.inner_width).pack(anchor="w",pady=(self.px(3),0))
         self.quota_rows.append({"provider":total["id"],"tag":win.get("tag"),"full_width":True,
-                                "row":row,"value":value,"progress":progress,"display_percent":percent})
+                                "row":row,"value":value,"progress":progress,"display_percent":percent,
+                                "detail":detail_label,"timing":timing_label})
+
+    @staticmethod
+    def _short_plan(provider, text):
+        text = str(text or "")
+        for prefix in {"codex": ("ChatGPT ",), "kimi": ("Kimi ",),
+                       "zcode": ("GLM Coding Plan", "Coding Plan", "GLM", "ZCode")}.get(provider, ()):
+            text = text.removeprefix(prefix).strip(" ·:-")
+        return text
+
+    def _fact_lines(self, fact):
+        if fact["error"]:
+            return [line.replace("最后成功更新 ", "上次更新 ").rsplit(":", 1)[0]
+                    if line.startswith("最后成功更新 ") else line
+                    for line in fact["lines"] if line.startswith(("读取失败", "最后成功更新"))]
+        parts = []
+        for line in fact["lines"]:
+            if line == "5 小时额度按消耗时间恢复":
+                continue
+            if line.startswith("订阅到期："):
+                line = line.split("：", 1)[1].split(" ", 1)[0]+" 到期"
+            else:
+                line = self._short_plan(fact["id"], line).replace("额外点数余额：", "点数余额 ")
+            if line:
+                parts.append(line)
+        return [" · ".join(parts)] if parts else []
 
     def dismiss(self):
         if self.on_dismiss is not None:

@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from hover_cards import QuotaHover, make_passive_window, reset_caption
 
-APP_VERSION = "0.3.5"
+APP_VERSION = "0.3.6"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云

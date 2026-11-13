@@ -48,14 +48,24 @@ def main():
                 value = row["value"]
                 label = next(w for w in value.master.winfo_children() if w is not value)
                 assert label.winfo_rootx() + label.winfo_width() + 2 <= value.winfo_rootx(), (row["provider"], row["tag"])
+                assert row["detail"].winfo_rootx() + row["detail"].winfo_width() + 2 <= row["timing"].winfo_rootx()
+                assert "…" not in row["detail"].cget("text")
+                assert row["timing"].cget("text") == "12-05 重置"
                 for item in row["progress"].find_all():
                     coordinates = row["progress"].coords(item)
                     assert max(coordinates[0], coordinates[2]) <= row["progress"].winfo_width() + 1
             x, y, width, height = card.placement
             left, top, right, bottom = card.workarea
             assert left <= x and top <= y and x+width <= right and y+height <= bottom
-            assert width <= card.px(320)
-            assert height <= card.px(360)
+            assert width <= card.px(260)
+            assert height <= card.px(220 if stale else 160)
+            for label in card.fact_labels:
+                assert label.winfo_rootx() + label.winfo_width() <= x+width-card.px(10)+1
+                assert "\n" not in label.cget("text")
+                if not stale:
+                    assert "…" not in label.cget("text")
+            if stale:
+                assert any("上次更新" in label.cget("text") for label in card.fact_labels)
             reports.append({"mode": mode, "light": light, "scale": round(card.scale, 2),
                             "size": [width, height], "monthly_width": monthly["row"].winfo_width(),
                             "visible_facts": card.visible_facts, "omitted_facts": card.omitted_facts})

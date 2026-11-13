@@ -24,7 +24,7 @@ The default is **remaining** allowance. Choose **剩余额度** (remaining) or *
 
 The compact hover tooltip focuses on information beyond the taskbar: monthly totals, plans, expiry and connection issues. Short-term quota bars remain visible in the taskbar. The tooltip follows the light or dark theme and automatically closes when the pointer leaves the taskbar widget.
 
-Kimi's monthly total is the main full-width progress bar in the tooltip. Counts and reset details sit under the bar and follow the selected remaining/used mode. Plans and expiry details use compact text rows.
+Kimi's monthly total is the main full-width progress bar in the tooltip. Counts and the reset date sit under the bar and follow the selected remaining/used mode. Plans and expiry use short text rows. There is no separate heading or instruction footer; a typical tooltip is 260×133 logical pixels.
 
 GLM's 5-hour quota recovers dynamically. If the API omits the next recovery time, the taskbar shows **已满** (full), **未用** (unused in used mode), or **滚动** (rolling recovery). Stale readings without a precise time show **待刷新**. A recovery countdown is shown only when an exact timestamp is supplied.
 

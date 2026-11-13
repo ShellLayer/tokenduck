@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6 — 2026-11-13
+
+- Further reduced the hover tooltip's common layout from 320×266 to 260×133 logical pixels.
+- Removed the generic heading, routine update timestamp and instruction footer; display mode now sits beside the monthly quota title.
+- Condensed plans, expiry dates, monthly counts and Code attribution into short rows, while keeping connection failures and the last successful update visible.
+- Kept automatic dismissal, click-through behavior, full-width monthly progress and remaining/used mode.
+
 ## 0.3.5 — 2026-11-13
 
 - Replaced the large provider dashboard with a compact supplementary tooltip, centered on Kimi monthly totals, plans, expiry and connection issues.
