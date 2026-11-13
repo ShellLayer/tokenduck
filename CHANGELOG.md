@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.8 — 2026-11-13
+
+- Stopped repeated taskbar lifts and geometry changes from competing with menus, popdowns and settings dialogs; removed delayed post-click raises.
+- Replaced the quota-display dropdown with two mutually exclusive buttons for remaining and used allowance.
+- Added Codex subscription expiry from the matching account/user/plan in the official local login snapshot. The date is labeled with its source; past snapshots show "waiting for update", and missing dates remain unknown.
+- Kept only the public expiry timestamp in the quota cache and retained read-only access to Codex login files.
+- Added menu/dialog stability regressions and real Tk checks for button selection, persistence and suppression of taskbar raises during dialog interaction.
+
 ## 0.3.7 — 2026-11-13
 
 - Removed the hover window and all automatic hover and left-click actions.

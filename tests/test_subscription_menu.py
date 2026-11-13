@@ -63,7 +63,7 @@ class SubscriptionModelTests(unittest.TestCase):
         bar = sample_bar()
         bar.root = Mock()
         bar.root.winfo_id.return_value = 12
-        bar.update_menu_details, bar._kick_lift = Mock(), Mock()
+        bar.update_menu_details = Mock()
         bar.autostart_var, bar.menu = Mock(), Mock()
         bar.autostart_enabled = Mock(return_value=False)
         native = Mock()

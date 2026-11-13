@@ -62,6 +62,29 @@ def make_passive_window(window):
         return None, None
 
 
+def native_menu_active():
+    """Read this UI thread's native menu state with pointer-sized HWND fields."""
+    class GuiThreadInfo(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("flags", wintypes.DWORD),
+                    ("active", wintypes.HWND), ("focus", wintypes.HWND),
+                    ("capture", wintypes.HWND), ("menu_owner", wintypes.HWND),
+                    ("move_size", wintypes.HWND), ("caret", wintypes.HWND),
+                    ("caret_rect", wintypes.RECT)]
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentThreadId.argtypes = []
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+        user32.GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(GuiThreadInfo)]
+        user32.GetGUIThreadInfo.restype = wintypes.BOOL
+        info = GuiThreadInfo()
+        info.size = ctypes.sizeof(info)
+        # GUI_INMENUMODE | GUI_SYSTEMMENUMODE | GUI_POPUPMENUMODE.
+        return bool(user32.GetGUIThreadInfo(kernel32.GetCurrentThreadId(), ctypes.byref(info)) and info.flags & 0x1c)
+    except (AttributeError, OSError):
+        return False
+
+
 def _short_plan(provider, text):
     text = str(text or "")
     for prefix in {"codex": ("ChatGPT ",), "kimi": ("Kimi ",),

@@ -20,11 +20,11 @@ The current UI is primarily Chinese. Tested on **Windows 11 x64**. Windows 10, o
 
 Right-click the taskbar widget to see subscription details, with Kimi monthly totals first, followed by plans, expiry and connection issues. The widget has no hover popup or left-click action. The same menu provides manual refresh, account, display and startup settings.
 
-The default is **remaining** allowance. Choose **剩余额度** (remaining) or **已用额度** (used) in **显示与刷新设置…**. Percentages, bar fill and convertible allowance counts change together. Taskbar labels use **余** for remaining and **用** for used. Unused Kimi windows display `100%` remaining or `0%` used. Failed refreshes keep the last reading muted and marked `*`; low-allowance colors always reflect actual remaining capacity.
+The default is **remaining** allowance. Choose the **剩余额度** (remaining) or **已用额度** (used) button in **显示与刷新设置…**. Percentages, bar fill and convertible allowance counts change together. Taskbar labels use **余** for remaining and **用** for used. Unused Kimi windows display `100%` remaining or `0%` used. Failed refreshes keep the last reading muted and marked `*`; low-allowance colors always reflect actual remaining capacity.
 
 Short-term quota bars remain visible in the taskbar. Supplementary details appear as read-only rows above the actions in the right-click menu, using the current readings each time the menu opens.
 
-Kimi monthly percentages, counts and reset times follow the selected remaining/used mode. Code consumption remains an attribution within the monthly total. Failed refreshes keep the last reading and show the failure reason and last successful update in the menu.
+Kimi monthly percentages, counts and reset times follow the selected remaining/used mode. Code consumption remains an attribution within the monthly total. Failed refreshes keep the last reading and show the failure reason and last successful update in the menu. Codex expiry comes from the matching account, user and plan in the official local login snapshot, and is labeled accordingly. Missing or past snapshot dates show unknown or waiting-for-update states.
 
 GLM's 5-hour quota recovers dynamically. If the API omits the next recovery time, the taskbar shows **已满** (full), **未用** (unused in used mode), or **滚动** (rolling recovery). Stale readings without a precise time show **待刷新**. A recovery countdown is shown only when an exact timestamp is supplied.
 

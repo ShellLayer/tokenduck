@@ -247,6 +247,7 @@ def bare_bar():
     bar.seg_timers = [[f"cd{i}-{j}" for j in range(2)] for i in range(3)]
     bar.fg, bar.muted_color = "#ffffff", "#888888"
     bar._safe_lift = lambda: None
+    bar._interaction_active = lambda: False
     bar._apply_font_size = lambda: None
     return bar
 

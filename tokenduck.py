@@ -37,9 +37,9 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
-from subscription_menu import make_passive_window, reset_caption, subscription_menu_rows
+from subscription_menu import make_passive_window, native_menu_active, reset_caption, subscription_menu_rows
 
-APP_VERSION = "0.3.7"
+APP_VERSION = "0.3.8"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -350,7 +350,9 @@ def fetch_usage(timeout=15):
     )
     try:
         with _urlopen(req, timeout=timeout) as r:
-            return json.load(r)
+            data = json.load(r)
+        data["subscription_until"] = _codex_subscription_until(tokens, data.get("plan_type"))
+        return data
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise RuntimeError("登录已过期 (401)，请在终端运行一次 codex")
@@ -430,6 +432,27 @@ def _jwt_exp(tok):
         return float(_jwt_claims(tok).get("exp", 0))
     except Exception:
         return 0.0
+
+
+def _codex_subscription_until(tokens, plan_type):
+    """Read an account/user/plan-matched subscription snapshot, never JWT exp."""
+    namespace = "https://api.openai.com/auth"
+    account = tokens.get("account_id")
+    access = _jwt_claims(tokens.get("access_token", "")).get(namespace)
+    if not isinstance(account, str) or not isinstance(access, dict) or access.get("chatgpt_account_id") != account:
+        return None
+    for name in ("id_token", "access_token"):
+        claims = _jwt_claims(tokens.get(name, "")).get(namespace)
+        if not isinstance(claims, dict) or claims.get("chatgpt_account_id") != account:
+            continue
+        if access.get("chatgpt_user_id") and claims.get("chatgpt_user_id") != access["chatgpt_user_id"]:
+            continue
+        if not plan_type or claims.get("chatgpt_plan_type") != plan_type:
+            continue
+        until = _timestamp(claims.get("chatgpt_subscription_active_until"))
+        if until is not None and until > 0:
+            return until
+    return None
 
 
 def _jwt_user(tok):
@@ -1412,7 +1435,7 @@ def _display_windows(provider, data):
 
 
 _CACHE_FIELDS = {
-    "codex": ("plan_type", "rate_limit", "credits"),
+    "codex": ("plan_type", "rate_limit", "credits", "subscription_until"),
     "kimi": ("windows", "level", "used_ratio", "amount", "amount_left",
              "code_used_ratio", "reset_at", "source"),
     "zcode": ("windows", "level", "plan_name", "until", "used", "limit",
@@ -1479,6 +1502,8 @@ class TokenDuck:
         self.last_success = {name: entry["saved_at"] for name, entry in cached.items()}
         self.last_refresh = None
         self.width = 120
+        self._menu_active = False
+        self._anchor_geometry = None
         self.screen_x = 0
         self.screen_y = 0
         self.tb_h = 48                # 最近一次探测到的任务栏高（anchor 里更新）
@@ -1781,6 +1806,17 @@ class TokenDuck:
             limited = bool((data.get("rate_limit") or {}).get("limit_reached")) if provider == "codex" else False
             if limited:
                 notes.append("当前已达到速率上限")
+            if provider == "codex" and data:
+                until = _num(data.get("subscription_until"))
+                if until is not None and until > now:
+                    try:
+                        notes.append(datetime.fromtimestamp(until).strftime("订阅到期（登录记录）：%Y-%m-%d %H:%M"))
+                    except (OSError, OverflowError, ValueError):
+                        notes.append("订阅到期：暂未提供")
+                elif until is not None and until > 0:
+                    notes.append("订阅到期：待更新（登录记录已过期）")
+                else:
+                    notes.append("订阅到期：暂未提供")
             code_ratio = _num(data.get("code_used_ratio")) if provider == "kimi" else None
             if code_ratio is not None and code_ratio > 0:
                 # 这是消耗来源占比，不是可独立取补数的 Kimi Code 额度。
@@ -1897,8 +1933,10 @@ class TokenDuck:
             self.screen_x = right_edge - self.width - int(self.cfg["offset_x"])
             self.screen_y = rect.top
             self.tb_h = tb_h
-            self.root.geometry("%dx%d+%d+%d" %
-                               (self.width, tb_h, self.screen_x, rect.top))
+            geometry = (self.width, tb_h, self.screen_x, rect.top)
+            if geometry != getattr(self, "_anchor_geometry", None) and not self._interaction_active():
+                self.root.geometry("%dx%d+%d+%d" % geometry)
+                self._anchor_geometry = geometry
             if self.chip is not None:
                 self.canvas.coords(self.chip,
                                    *_rr_points(1, 1, self.width - 1, tb_h - 1, 7))
@@ -2006,37 +2044,27 @@ class TokenDuck:
         """垫层色：任务栏色混入少量文字色，近似透明但整块可点击。"""
         return _blend(self.bg, self.fg, 0.09)
 
-    @staticmethod
-    def _menu_open():
-        """本进程当前是否有弹出的菜单（Win32 弹出菜单的窗口类名是 #32768）。"""
+    def _interaction_active(self):
+        """菜单、弹出选择器和可交互窗口打开时，任务栏不争抢层级。"""
+        if getattr(self, "_menu_active", False):
+            return True
         try:
-            user32 = ctypes.windll.user32
-            pid = os.getpid()
-            h = None
-            while True:
-                h = user32.FindWindowExW(None, h, "#32768", None)
-                if not h:
-                    return False
-                if user32.IsWindowVisible(h):
-                    wp = ctypes.c_ulong(0)
-                    user32.GetWindowThreadProcessId(h, ctypes.byref(wp))
-                    if wp.value == pid:
-                        return True
-        except Exception:
-            return False
+            if self.root.tk.call("grab", "current", self.root._w):
+                return True
+            if any(isinstance(child, tk.Toplevel) and child.state() == "normal"
+                   for child in self.root.winfo_children()):
+                return True
+        except (AttributeError, tk.TclError):
+            pass
+        return native_menu_active()
 
     def _safe_lift(self):
         """置顶防被任务栏盖住；但菜单弹出期间不抢层级，否则会遮住菜单。"""
-        if not self._menu_open():
+        if not self._interaction_active():
             try:
                 self.root.lift()
             except Exception:
                 pass
-
-    def _kick_lift(self):
-        """点击后任务栏会抢置顶，立即补几次置顶防止窗口被盖住。"""
-        for delay in (0, 80, 250, 600):
-            self.root.after(delay, self._safe_lift)
 
     # ---------- 菜单 / 自启 ----------
 
@@ -2055,8 +2083,16 @@ class TokenDuck:
         self._menu_detail_count = len(rows)
 
     def show_menu(self, event):
+        if getattr(self, "_menu_active", False):
+            return
+        self._menu_active = True
+        try:
+            self._show_menu(event)
+        finally:
+            self._menu_active = False
+
+    def _show_menu(self, event):
         self.update_menu_details()
-        self._kick_lift()
         self.autostart_var.set(self.autostart_enabled())
         try:
             # 先把本窗口设为前台：菜单才能压在最上层，且点别处能正常收起
@@ -2275,12 +2311,13 @@ class TokenDuck:
                 self.root.after(0, self._update_account_status)
         threading.Thread(target=work, daemon=True).start()
 
-    def show_display_settings(self):
+    def show_display_settings(self, hidden=False):
         window = getattr(self, "_settings_window", None)
         if window is not None and window.winfo_exists():
             window.lift()
             return
         window = self._settings_window = tk.Toplevel(self.root)
+        window.withdraw()
         window.transient(self.root)
         window.title("TokenDuck · 显示与刷新设置")
         window.resizable(False, False)
@@ -2297,16 +2334,22 @@ class TokenDuck:
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=6, padx=(0, 15))
             variable = values[key] = tk.StringVar(value=str(self.cfg.get(key, DEFAULT_CONFIG[key])))
             ttk.Spinbox(panel, from_=lo, to=hi, width=10, textvariable=variable).grid(row=row, column=1)
-        mode_options = {"剩余额度": "remaining", "已用额度": "used"}
-        mode = tk.StringVar(value="已用额度" if self.quota_display() == "used" else "剩余额度")
+        mode = tk.StringVar(window, value=self.quota_display())
         ttk.Label(panel, text="额度显示方式").grid(row=4, column=0, sticky="w", pady=6)
-        ttk.Combobox(panel, textvariable=mode, values=tuple(mode_options), state="readonly", width=12).grid(row=4, column=1)
+        choices = ttk.Frame(panel)
+        choices.grid(row=4, column=1, sticky="w")
+        ttk.Style(window).configure("Quota.Toolbutton", padding=(10, 6))
+        self._settings_mode_buttons = {}
+        for label, value in (("剩余额度", "remaining"), ("已用额度", "used")):
+            button = ttk.Radiobutton(choices, text=label, variable=mode, value=value, style="Quota.Toolbutton")
+            button.pack(side="left", padx=(0, 6))
+            self._settings_mode_buttons[value] = button
         ttk.Label(panel, text="百分比、进度条和可换算数值会同步应用于任务栏与右键详情。\n任务栏空间不足时会自动缩小文字。",
                   wraplength=330).grid(row=5, column=0, columnspan=2, sticky="w", pady=10)
 
         def apply():
             settings = dict(self.cfg)
-            settings["quota_display"] = mode_options[mode.get()]
+            settings["quota_display"] = mode.get()
             try:
                 for key, _, lo, hi in fields:
                     n = int(values[key].get())
@@ -2325,7 +2368,10 @@ class TokenDuck:
             self.render()
             window.destroy()
 
-        ttk.Button(panel, text="保存并应用", command=apply).grid(row=6, column=1, sticky="e")
+        self._settings_save_button = ttk.Button(panel, text="保存并应用", command=apply)
+        self._settings_save_button.grid(row=6, column=1, sticky="e")
+        if not hidden:
+            window.deiconify()
 
     def show_about(self):
         messagebox.showinfo("关于 TokenDuck", "TokenDuck " + APP_VERSION +
@@ -2556,7 +2602,8 @@ def self_check():
             report["glm_time_text_does_not_overlap"] = bar.canvas.bbox(pct_item)[2] + 2 <= bar.canvas.bbox(time_item)[0]
             bar.kimi_error = "synthetic connection failure"
             bar.last_success["kimi"] = time.time()-600
-            bar.data = {"plan_type": "plus", "credits": {"has_credits": True, "balance": 20}}
+            bar.data = {"plan_type": "plus", "subscription_until": time.time()+86400,
+                        "credits": {"has_credits": True, "balance": 20}}
             bar.zcode_data["plan_name"] = "GLM Coding Plan · Pro"
             bar.zcode_data["until"] = time.time()+86400
             bar.update_menu_details()
@@ -2565,6 +2612,16 @@ def self_check():
             report["menu_last_success_visible"] = any("最后成功更新" in s for s in labels)
             report["menu_plans_credits_expiry_visible"] = (any("Codex · Plus" in s for s in labels) and
                 any("额外点数余额：20" in s for s in labels) and any("订阅到期：" in s for s in labels))
+            report["codex_subscription_expiry_visible"] = any("订阅到期（登录记录）：" in s for s in labels)
+            bar.show_display_settings(hidden=True)
+            choices = bar._settings_mode_buttons
+            choices["used"].invoke()
+            used_selected = choices["used"].instate(["selected"]) and not choices["remaining"].instate(["selected"])
+            choices["remaining"].invoke()
+            report["quota_mode_buttons_work"] = used_selected and choices["remaining"].instate(["selected"])
+            report["quota_mode_has_two_buttons"] = len(choices) == 2 and all(
+                isinstance(button, ttk.Radiobutton) for button in choices.values())
+            bar._settings_window.destroy()
         finally:
             bar.quit()
         report["ok"] = all(value for key, value in report.items() if key not in ("version", "ok"))
