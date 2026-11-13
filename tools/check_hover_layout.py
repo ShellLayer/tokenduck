@@ -42,8 +42,8 @@ def main():
             card = InvisibleHover(root, sections, (560, 1000, 940, 1048), light=light)
             root.update()
             monthly = next(r for r in card.quota_rows if r["provider"] == "kimi" and r["tag"] == "月")
-            primary = next(r for r in card.quota_rows if r["provider"] == "kimi" and r["tag"] == "5h")
-            assert monthly["row"].winfo_width() > primary["row"].winfo_width() * 1.8
+            assert len(card.quota_rows) == 1
+            assert all(r["tag"] == "月" for r in card.quota_rows)
             for row in card.quota_rows:
                 value = row["value"]
                 label = next(w for w in value.master.winfo_children() if w is not value)
@@ -54,10 +54,11 @@ def main():
             x, y, width, height = card.placement
             left, top, right, bottom = card.workarea
             assert left <= x and top <= y and x+width <= right and y+height <= bottom
+            assert width <= card.px(320)
+            assert height <= card.px(360)
             reports.append({"mode": mode, "light": light, "scale": round(card.scale, 2),
                             "size": [width, height], "monthly_width": monthly["row"].winfo_width(),
-                            "primary_width": primary["row"].winfo_width(),
-                            "scrollable": card.cards.winfo_reqheight() > card.scroller.winfo_height()})
+                            "visible_facts": card.visible_facts, "omitted_facts": card.omitted_facts})
             card.destroy()
         print(json.dumps({"layout_checks": reports, "screen_capture_used": False}))
     finally:

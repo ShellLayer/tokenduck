@@ -1,4 +1,4 @@
-"""Compact quota cards for the hover flyout; standard-library Tkinter only."""
+"""Passive supplementary tooltip; standard-library Tkinter only."""
 
 import ctypes
 from copy import deepcopy
@@ -55,17 +55,6 @@ def fit_popup(anchor, size, workarea, gap=8):
     return int(x), int(y), int(width), int(height)
 
 
-def quota_layout(windows):
-    """Pair short windows, then give each total quota a full-width row."""
-    primary = [w for w in windows if not w.get("full_width")]
-    totals = [w for w in windows if w.get("full_width")]
-    columns = 2 if len(primary) > 1 else 1
-    cells = [(w, index // columns, index % columns, 1) for index, w in enumerate(primary)]
-    first_total = (len(primary) + columns - 1) // columns
-    cells.extend((w, first_total + index, 0, columns) for index, w in enumerate(totals))
-    return columns, cells
-
-
 def monitor_workarea(owner):
     try:
         class MonitorInfo(ctypes.Structure):
@@ -99,7 +88,7 @@ PALETTES = {
 }
 
 
-def make_passive_window(window):
+def make_passive_window(window, click_through=False):
     """Keep an informational window out of mouse-activation and task switching."""
     try:
         user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -112,7 +101,9 @@ def make_passive_window(window):
         get_style.restype = ctypes.c_ssize_t
         set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
         set_style.restype = ctypes.c_ssize_t
-        set_style(hwnd, -20, (get_style(hwnd, -20) | 0x08000080) & ~0x00040000)
+        style = (get_style(hwnd, -20) | 0x08000080) & ~0x00040000
+        style = style | 0x80020 if click_through else style & ~0x20
+        set_style(hwnd, -20, style)
         return user32, hwnd
     except (AttributeError, OSError, tk.TclError):
         return None, None
@@ -127,12 +118,45 @@ def rounded(canvas, bounds, radius, **options):
     return canvas.create_polygon(points, smooth=True, splinesteps=32, **options)
 
 
+def supplemental_content(sections):
+    """Project only information that supplements the always-visible taskbar quotas."""
+    totals, facts = [], []
+    for section in sections:
+        months = [w for w in section["windows"] if w.get("tag") == "月"]
+        for window in months:
+            totals.append({"id": section["id"], "title": section["title"], "color": section["color"],
+                           "plan": section.get("plan", ""), "window": deepcopy(window),
+                           "error": section.get("error"), "updated": section.get("updated", "")})
+        lines = [] if months else [str(section.get("plan") or "")]
+        lines.extend(section.get("notes", []))
+        if section["id"] == "kimi" and section["windows"] and not months:
+            lines.append("暂无月总额度信息")
+        if section["id"] == "zcode" and any(
+                w.get("tag") == "5h" and ("滚动" in w.get("reset", "") or "5 小时后恢复" in w.get("reset", ""))
+                for w in section["windows"]):
+            lines.append("5 小时额度按消耗时间恢复")
+        error = section.get("error")
+        if error:
+            message = " ".join(str(error).split())
+            lines.append("读取失败：" + (message[:35] + "…" if len(message) > 36 else message))
+            if section.get("updated"):
+                lines.append(section["updated"])
+        lines = [line for line in lines if line]
+        if lines:
+            facts.append({"id": section["id"], "title": section["title"], "lines": lines, "error": bool(error)})
+    totals.sort(key=lambda item: item["id"] != "kimi")
+    facts.sort(key=lambda item: not item["error"])
+    mode = sections[0].get("display_mode", "remaining") if sections else "remaining"
+    return {"totals": totals, "facts": facts, "display_mode": mode}
+
+
 class QuotaHover(tk.Toplevel):
-    def __init__(self, owner, sections, anchor, light=False, on_enter=None, on_leave=None, on_dismiss=None):
+    """A passive, click-through tooltip for supplementary subscription information."""
+    def __init__(self, owner, sections, anchor, light=False, on_dismiss=None):
         super().__init__(owner)
         self.withdraw()
         self.transient(owner)
-        self.title("TokenDuck · 订阅额度")
+        self.title("TokenDuck · 补充信息")
         self.overrideredirect(True)
         self.attributes("-toolwindow", True)
         self.attributes("-topmost", True)
@@ -140,10 +164,7 @@ class QuotaHover(tk.Toplevel):
         self.scale = max(0.8, float(self.tk.call("tk", "scaling")) / (96 / 72))
         self.anchor_rect = anchor
         self.workarea = monitor_workarea(owner)
-        self.sections = sections
-        self.on_enter, self.on_leave = on_enter, on_leave
         self.on_dismiss = on_dismiss
-        self.pinned = False
         self._key = "#010203"
         self.configure(bg=self._key)
         self.attributes("-transparentcolor", self._key)
@@ -151,10 +172,6 @@ class QuotaHover(tk.Toplevel):
         self.shell.pack(fill="both", expand=True)
         self.content = None
         self.update_sections(sections)
-        if on_enter:
-            self.bind("<Enter>", lambda _event: on_enter(), add="+")
-        if on_leave:
-            self.bind("<Leave>", lambda _event: on_leave(), add="+")
         self.bind("<Escape>", lambda _event: self.dismiss())
         self.update_idletasks()
         self._native_position()
@@ -164,224 +181,134 @@ class QuotaHover(tk.Toplevel):
     def px(self, value):
         return max(1, round(value * self.scale))
 
-    def label(self, parent, text, size=9, weight="normal", color=None, **kwargs):
+    def label(self, parent, text, size=8, weight="normal", color=None, **kwargs):
         options = dict(bg=parent.cget("bg"), fg=color or self.palette["text"],
                        font=("Microsoft YaHei UI", size, weight), bd=0, padx=0, pady=0)
         options.update(kwargs)
         return tk.Label(parent, text=text, **options)
 
     def update_sections(self, sections):
+        model = supplemental_content(sections)
         workarea = monitor_workarea(self.master)
-        render_key = (deepcopy(sections), dict(self.palette), self.anchor_rect, workarea)
+        render_key = (deepcopy(model), dict(self.palette), self.anchor_rect, workarea)
         if self.content is not None and render_key == self._render_key:
             return
         self._render_key = render_key
-        self.sections = sections
-        old_scroll = self.scroller.yview()[0] if self.content is not None else 0
+        self.content_model = model
+        self.workarea = workarea
         if self.content is not None:
             self.content.destroy()
         self.shell.delete("all")
         p = self.palette
-        self.workarea = workarea
-        margin = self.px(14)
-        width = min(self.px(400), self.workarea[2] - self.workarea[0] - self.px(16))
-        inner_width = max(self.px(180), width - 2 * margin)
+        margin = self.px(12)
+        width = min(self.px(320), workarea[2] - workarea[0] - self.px(16))
+        self.inner_width = max(1, width - 2*margin)
         self.content = tk.Frame(self.shell, bg=p["shell"])
-        content_window = self.shell.create_window(margin, margin, window=self.content, width=inner_width, anchor="nw")
+        self.shell.create_window(margin, margin, window=self.content, width=self.inner_width, anchor="nw")
         header = tk.Frame(self.content, bg=p["shell"])
-        header.pack(fill="x", pady=(0, self.px(12)))
-        self.label(header, "TokenDuck", 13, "bold").pack(side="left")
-        tk.Button(header, text="×", command=self.dismiss, bg=p["shell"], fg=p["muted"],
-                  activebackground=p["card"], activeforeground=p["text"], bd=0, relief="flat",
-                  font=("Segoe UI", 12), padx=self.px(3), pady=0, takefocus=False).pack(side="right")
-        self.pin_note = self.label(header, "订阅额度", color=p["muted"])
-        self.pin_note.pack(side="right", padx=(0, self.px(8)), anchor="center")
-        body = tk.Frame(self.content, bg=p["shell"])
-        body.pack(fill="both", expand=True)
-        self.scroller = tk.Canvas(body, bg=p["shell"], bd=0, highlightthickness=0,
-                                  width=inner_width)
-        self.scroller.pack(side="left", fill="both", expand=True)
-        self.cards = tk.Frame(self.scroller, bg=p["shell"])
-        card_window = self.scroller.create_window(0, 0, window=self.cards, width=inner_width, anchor="nw")
+        header.pack(fill="x", pady=(0, self.px(10)))
+        self.label(header, "补充信息", 10, "bold").pack(side="left")
+        kind = "已用额度" if model["display_mode"] == "used" else "剩余额度"
+        self.label(header, kind, color=p["muted"]).pack(side="right")
+        self.body = tk.Frame(self.content, bg=p["shell"])
+        self.body.pack(fill="x")
         self.quota_rows = []
-        for index, section in enumerate(sections):
-            self._card(section, inner_width, index)
-        self.cards.update_idletasks()
-        requested = self.cards.winfo_reqheight()
+        for index, total in enumerate(model["totals"]):
+            self._total(total, index)
+        facts = tk.Frame(self.body, bg=p["shell"])
+        facts.pack(fill="x")
+        if model["totals"] and model["facts"]:
+            tk.Frame(facts, bg=p["border"], height=1).pack(fill="x", pady=(self.px(10), self.px(4)))
         footer = tk.Frame(self.content, bg=p["shell"])
         footer.pack(fill="x", pady=(self.px(10), 0))
-        kind = "已用" if sections and sections[0].get("display_mode") == "used" else "剩余"
-        self.label(footer, "百分比均为%s额度" % kind, 8, color=p["muted"]).pack(side="left")
-        self.action_hint = self.label(footer, "", 8, color=p["muted"])
-        self.action_hint.pack(side="right")
-        self.set_pinned(self.pinned)
-        header.update_idletasks()
-        footer.update_idletasks()
-        available = max(self.px(90), self.workarea[3] - self.workarea[1] -
-                        2 * margin - header.winfo_reqheight() - footer.winfo_reqheight() - self.px(40))
-        viewport = min(requested, available)
-        if requested > viewport:
-            scrollbar = tk.Scrollbar(body, orient="vertical", command=self.scroller.yview,
-                                     bg=p["shell"], troughcolor=p["shell"], width=self.px(10), bd=0)
-            scrollbar.pack(side="right", fill="y")
-            self.scroller.configure(yscrollcommand=scrollbar.set)
-            content_width = inner_width - self.px(12)
-            self.scroller.itemconfigure(card_window, width=content_width)
-            # Cards keep their measured width; reserve the scroll gutter in the shell.
-            width = min(width + self.px(12), self.workarea[2] - self.workarea[0] - self.px(16))
-            inner_width = width - 2 * margin
-            self.shell.itemconfigure(content_window, width=inner_width)
-            self.scroller.itemconfigure(card_window, width=inner_width - self.px(12))
-        self.scroller.configure(height=viewport, scrollregion=(0, 0, inner_width, requested))
-        self.scroller.yview_moveto(old_scroll)
-        self._bind_wheel(self.cards)
-        self.scroller.bind("<MouseWheel>", self._wheel)
+        self.label(footer, "移开自动收起", color=p["muted"]).pack(side="left")
+        more = self.label(footer, "任务栏右键管理", color=p["muted"])
+        more.pack(side="right")
+        self.visible_facts = self.omitted_facts = 0
+        max_content_height = min(self.px(360), workarea[3]-workarea[1]-self.px(16)) - 2*margin
+        for fact in model["facts"]:
+            row = tk.Frame(facts, bg=p["shell"])
+            row.pack(fill="x", pady=(self.px(6), 0))
+            row.columnconfigure(0, minsize=self.px(47))
+            row.columnconfigure(1, weight=1)
+            self.label(row, fact["title"], 9, "bold").grid(row=0, column=0, sticky="nw", padx=(0, self.px(9)))
+            self.label(row, "\n".join(fact["lines"]), color=p["warn"] if fact["error"] else p["muted"],
+                       wraplength=max(self.px(80), self.inner_width-self.px(60)), justify="left").grid(row=0, column=1, sticky="nw")
+            self.content.update_idletasks()
+            if self.content.winfo_reqheight() > max_content_height:
+                row.destroy()
+                self.omitted_facts += 1
+            else:
+                self.visible_facts += 1
+        if self.omitted_facts:
+            more.configure(text="更多详情：任务栏右键")
+        if not model["totals"] and not model["facts"]:
+            self.label(self.body, "暂无补充信息，正在等待额度更新。", color=p["muted"],
+                       wraplength=self.inner_width, justify="left").pack(anchor="w")
         self.content.update_idletasks()
-        height = self.content.winfo_reqheight() + 2 * margin
-        self.placement = fit_popup(self.anchor_rect, (width, height), self.workarea, self.px(8))
-        x, y, width, height = self.placement
+        height = self.content.winfo_reqheight()+2*margin
+        self.placement = fit_popup(self.anchor_rect, (width, height), workarea, self.px(8))
+        x,y,width,height = self.placement
         self.shell.configure(width=width, height=height)
-        rounded(self.shell, (1, 1, width-1, height-1), self.px(15),
-                fill=p["shell"], outline=p["border"], width=1)
-        self.shell.tag_lower("all")
-        # Embedded widgets must remain above the rounded background.
-        for item in self.shell.find_all():
-            if self.shell.type(item) == "window":
-                self.shell.tag_raise(item)
-        self.geometry("%dx%d+%d+%d" % (width, height, max(0, x), max(0, y)))
+        background = rounded(self.shell, (1,1,width-1,height-1), self.px(12),
+                             fill=p["shell"], outline=p["border"], width=1)
+        self.shell.tag_lower(background)
+        self.geometry("%dx%d+%d+%d" % (width,height,max(0,x),max(0,y)))
         self.update_idletasks()
         if self.winfo_ismapped():
             self._native_position()
 
-    def _card(self, section, width, index):
+    def _total(self, total, index):
         p = self.palette
-        outer = tk.Canvas(self.cards, width=width, bd=0, highlightthickness=0, bg=p["shell"])
-        outer.pack(fill="x", pady=(0 if index == 0 else self.px(9), 0))
-        pad = self.px(13)
-        inside = tk.Frame(outer, bg=p["card"])
-        outer.create_window(pad, pad, window=inside, width=width - 2*pad, anchor="nw")
-        heading = tk.Frame(inside, bg=p["card"])
-        heading.pack(fill="x")
-        color = section["color"]
-        mark = tk.Canvas(heading, width=self.px(26), height=self.px(26), bg=p["card"], bd=0, highlightthickness=0)
-        mark.pack(side="left", padx=(0, self.px(9)))
-        rounded(mark, (0, 0, self.px(26), self.px(26)), self.px(7), fill=color, outline="")
-        mark.create_text(self.px(13), self.px(13), text=section["title"][0], fill="#ffffff",
-                         font=("Segoe UI", 10, "bold"))
-        identity = tk.Frame(heading, bg=p["card"])
-        self.label(identity, section["title"], 10, "bold").pack(anchor="w")
-        if section.get("plan"):
-            self.label(identity, str(section["plan"])[:38], 8, color=p["muted"],
-                       wraplength=max(self.px(80), width - 2*pad - self.px(115)), justify="left").pack(anchor="w")
-        stale = bool(section.get("error"))
-        has_windows = bool(section["windows"])
-        limited = bool(section.get("limited")) or any(w["remaining"] <= 0 for w in section["windows"])
-        status = ("上次记录" if stale and has_windows else "连接异常" if stale else
-                  "额度受限" if limited else "已更新" if has_windows else "等待更新")
-        status_color = p["warn"] if stale else p["danger"] if limited else p["good"] if has_windows else p["muted"]
-        status_bg = p["warn_bg"] if stale or limited else p["good_bg"] if has_windows else p["track"]
-        badge = self.label(heading, status, 8, color=status_color, padx=self.px(6), pady=self.px(3))
-        badge.configure(bg=status_bg)
-        badge.pack(side="right", padx=(self.px(5), 0))
-        identity.pack(side="left", fill="x", expand=True)
-        grid = tk.Frame(inside, bg=p["card"])
-        grid.pack(fill="x", pady=(self.px(12), 0) if has_windows else 0)
-        columns, cells = quota_layout(section["windows"])
-        gutter = self.px(16) if columns == 2 else 0
-        quota_width = (width - 2*pad - gutter) // columns
-        for column in range(columns):
-            grid.columnconfigure(column, weight=1, uniform="quota")
-        for win, row_index, column, span in cells:
-            row = tk.Frame(grid, bg=p["card"])
-            wide = span == columns
-            meter_width = width - 2*pad if wide else quota_width
-            row.grid(row=row_index, column=column, columnspan=span, sticky="nsew",
-                     padx=0 if wide else (0 if column == 0 else gutter // 2, gutter // 2 if column == 0 else 0),
-                     pady=(self.px(12) if row_index else 0, 0))
-            if win.get("full_width") and row_index:
-                tk.Frame(row, bg=p["border"], height=1).pack(fill="x", pady=(0, self.px(10)))
-            title = tk.Frame(row, bg=p["card"])
-            title.pack(fill="x")
-            self.label(title, win["label"], 9 if win.get("full_width") else 8,
-                       "bold" if win.get("full_width") else "normal", color=p["quiet"]).pack(side="left")
-            remaining = win["remaining"]
-            display_percent = win.get("display_percent", remaining)
-            bar_color = p["muted"] if stale else p["danger"] if remaining <= 10 else p["warn"] if remaining <= 25 else color
-            value = self.label(title, "%d%%" % display_percent, 12, "bold", color=p["muted"] if stale else p["text"])
-            value.pack(side="right")
-            progress = tk.Canvas(row, width=meter_width, height=self.px(6), bg=p["card"], bd=0, highlightthickness=0)
-            progress.pack(fill="x", pady=(self.px(5), self.px(5)))
-            progress_width = meter_width
-            radius = self.px(3)
-            progress.create_line(radius, radius, progress_width-radius, radius,
-                                 fill=p["track"], width=self.px(5), capstyle="round")
-            if display_percent > 0:
-                progress.create_line(radius, radius, max(radius + 0.1, (progress_width-2*radius)*display_percent/100+radius), radius,
-                                     fill=bar_color, width=self.px(5), capstyle="round")
-            reset_parts = win["reset"].split(" · ", 1)
-            if win.get("full_width"):
-                meta = tk.Frame(row, bg=p["card"])
-                meta.pack(fill="x")
-                meta.columnconfigure(0, weight=1)
-                meta.columnconfigure(1, weight=1)
-                if win.get("detail"):
-                    self.label(meta, win["detail"], 8, color=p["muted"], justify="left",
-                               wraplength=meter_width // 2).grid(row=0, column=0, sticky="nw")
-                self.label(meta, "\n".join(reset_parts), 8, color=p["muted"], justify="right",
-                           wraplength=meter_width // 2).grid(row=0, column=1, sticky="ne")
-                if win.get("footnote"):
-                    self.label(row, win["footnote"], 8, color=p["muted"], justify="left",
-                               wraplength=meter_width).pack(anchor="w", pady=(self.px(5), 0))
-            else:
-                self.label(row, reset_parts[0], 8, color=p["muted"],
-                           wraplength=meter_width, justify="left").pack(anchor="w")
-                if len(reset_parts) > 1:
-                    exact = reset_parts[1]
-                    self.label(row, (win.get("reset_label", "重置于 ") if exact[0].isdigit() else "") + exact, 8,
-                               color=p["muted"], wraplength=meter_width, justify="left").pack(anchor="w", pady=(self.px(2), 0))
-                if win.get("detail"):
-                    self.label(row, win["detail"], 8, color=p["muted"], justify="left",
-                               wraplength=meter_width).pack(anchor="w", pady=(self.px(2), 0))
-            self.quota_rows.append({"provider": section["id"], "value": value, "row": row,
-                                    "progress": progress, "display_percent": display_percent,
-                                    "tag": win.get("tag"), "full_width": bool(win.get("full_width"))})
-        if not has_windows:
-            self.label(inside, "暂未获取到额度", 9, color=p["muted"]).pack(anchor="w", pady=(self.px(12), self.px(2)))
-        notes = section.get("notes", [])
-        for note in notes if stale else notes[:-1]:
-            self.label(inside, note, 8, color=p["muted"], justify="left",
-                       wraplength=width - 2*pad).pack(anchor="w", pady=(self.px(7), 0))
-        if stale:
-            error = " ".join(str(section["error"]).split())
-            if len(error) > 120:
-                error = error[:117] + "…"
-            self.label(inside, error, 8, color=p["warn"], justify="left",
-                       wraplength=width - 2*pad).pack(anchor="w", pady=(self.px(8), 0))
-        if stale and section.get("updated"):
-            self.label(inside, section["updated"], 8, color=p["muted"]).pack(anchor="w", pady=(self.px(9), 0))
-        elif not stale and (notes or section.get("updated")):
-            meta = tk.Frame(inside, bg=p["card"])
-            meta.pack(fill="x", pady=(self.px(9), 0))
-            meta.columnconfigure(0, weight=1)
-            note_width = width - 2*pad
-            if section.get("updated"):
-                stamp = section["updated"].rsplit(" ", 1)[-1]
-                label = self.label(meta, "更新 " + stamp, 8, color=p["muted"])
-                label.grid(row=0, column=1, sticky="ne", padx=(self.px(10), 0))
-                note_width -= label.winfo_reqwidth() + self.px(10)
-            if notes:
-                self.label(meta, notes[-1], 8, color=p["muted"], justify="left",
-                           wraplength=max(self.px(80), note_width)).grid(row=0, column=0, sticky="nw")
-        inside.update_idletasks()
-        height = inside.winfo_reqheight() + 2*pad
-        outer.configure(height=height)
-        background = rounded(outer, (1, 1, width-1, height-1), self.px(11), fill=p["card"], outline=p["border"])
-        outer.tag_lower(background)
-
-    def set_pinned(self, pinned):
-        self.pinned = bool(pinned)
-        self.pin_note.configure(text="已固定" if self.pinned else "订阅额度")
-        self.action_hint.configure(text="再次左键收起" if self.pinned else "左键固定 · 右键菜单")
+        win = total["window"]
+        row = tk.Frame(self.body, bg=p["shell"])
+        row.pack(fill="x", pady=(self.px(10) if index else 0,0))
+        title = tk.Frame(row, bg=p["shell"])
+        title.pack(fill="x")
+        self.label(title, total["title"]+" 月总额度", 9, "bold").pack(side="left")
+        stale = bool(total["error"])
+        remaining = win["remaining"]
+        percent = win.get("display_percent", remaining)
+        color = p["muted"] if stale else p["danger"] if remaining<=10 else p["warn"] if remaining<=25 else total["color"]
+        value = self.label(title, "%d%%" % percent, 12, "bold", color=p["muted"] if stale else p["text"])
+        value.pack(side="right")
+        progress = tk.Canvas(row, width=self.inner_width, height=self.px(6), bg=p["shell"], bd=0, highlightthickness=0)
+        progress.pack(fill="x", pady=(self.px(5),self.px(5)))
+        radius = self.px(3)
+        progress.create_line(radius,radius,self.inner_width-radius,radius,
+                             fill=p["track"], width=self.px(5), capstyle="round")
+        if percent>0:
+            progress.create_line(radius,radius,max(radius+.1,(self.inner_width-2*radius)*percent/100+radius),radius,
+                                 fill=color,width=self.px(5),capstyle="round")
+        meta = tk.Frame(row,bg=p["shell"])
+        meta.pack(fill="x")
+        meta.columnconfigure(0,weight=1)
+        meta.columnconfigure(1,weight=1)
+        self.label(meta,win.get("detail",""),color=p["muted"],justify="left",
+                   wraplength=self.inner_width//2).grid(row=0,column=0,sticky="nw")
+        reset_parts = win["reset"].split(" · ",1)
+        timing = (win.get("reset_label","重置于 ")+reset_parts[1]
+                  if len(reset_parts)>1 and reset_parts[1][0].isdigit() else win["reset"])
+        self.label(meta,timing,color=p["muted"],justify="right",
+                   wraplength=self.inner_width//2).grid(row=0,column=1,sticky="ne")
+        if win.get("footnote"):
+            self.label(row,win["footnote"],color=p["muted"],justify="left",
+                       wraplength=self.inner_width).pack(anchor="w",pady=(self.px(4),0))
+        plan = total.get("plan","")
+        stamp = total.get("updated","")
+        if stamp and not stale:
+            stamp = "更新 "+stamp.rsplit(" ",1)[-1][:5]
+        else:
+            stamp = ""
+        if plan or stamp:
+            note = tk.Frame(row,bg=p["shell"])
+            note.pack(fill="x",pady=(self.px(5),0))
+            if stamp:
+                self.label(note,stamp,color=p["muted"]).pack(side="right")
+            self.label(note,plan,color=p["muted"],wraplength=max(1,self.inner_width-self.px(80)),
+                       justify="left").pack(side="left")
+        self.quota_rows.append({"provider":total["id"],"tag":win.get("tag"),"full_width":True,
+                                "row":row,"value":value,"progress":progress,"display_percent":percent})
 
     def dismiss(self):
         if self.on_dismiss is not None:
@@ -389,25 +316,20 @@ class QuotaHover(tk.Toplevel):
         else:
             self.destroy()
 
-    def _bind_wheel(self, widget):
-        widget.bind("<MouseWheel>", self._wheel, add="+")
-        for child in widget.winfo_children():
-            self._bind_wheel(child)
-
-    def _wheel(self, event):
-        delta = -1 if event.delta > 0 else 1
-        self.scroller.yview_scroll(delta * 3, "units")
-        return "break"
-
     def _native_position(self):
         try:
-            user32, hwnd = make_passive_window(self)
+            user32,hwnd = make_passive_window(self,click_through=True)
             if user32 is None:
                 return
-            user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-                                           ctypes.c_int, ctypes.c_int, wintypes.UINT]
+            user32.SetLayeredWindowAttributes.argtypes = [wintypes.HWND, wintypes.DWORD, wintypes.BYTE, wintypes.DWORD]
+            user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
+            # Preserve Tk opacity (including invisible layout tests) and the corner color key.
+            alpha = max(0, min(255, round(float(self.attributes("-alpha"))*255)))
+            user32.SetLayeredWindowAttributes(hwnd, 0x030201, alpha, 3)
+            user32.SetWindowPos.argtypes = [wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,
+                                           ctypes.c_int,ctypes.c_int,wintypes.UINT]
             user32.SetWindowPos.restype = wintypes.BOOL
-            x, y, width, height = self.placement
-            user32.SetWindowPos(hwnd, -1, x, y, width, height, 0x0010)
-        except (AttributeError, OSError, tk.TclError):
+            x,y,width,height = self.placement
+            user32.SetWindowPos(hwnd,-1,x,y,width,height,0x0010)
+        except (AttributeError,OSError,tk.TclError):
             pass

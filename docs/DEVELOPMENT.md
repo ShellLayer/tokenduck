@@ -26,18 +26,18 @@ python tokenduck.py --self-check
 | 路径 | 用途 |
 | --- | --- |
 | `tokenduck.py` | 平台适配、额度请求、解析、缓存、任务栏界面与设置 |
-| `hover_cards.py` | 深浅主题额度卡片、滚动容器与屏幕内定位 |
+| `hover_cards.py` | 补充信息投影、轻量悬停、点击穿透与屏幕内定位 |
 | `secure_store.py` | 当前 Windows 用户加密的凭证存储 |
 | `codexbar.py` | 更名前源码启动命令的兼容入口 |
 | `tests/` | 离线行为与账号保护测试 |
 | `TokenDuck.spec` | PyInstaller 打包配置 |
 | `tools/collect_licenses.py` | 收集当前构建环境中随发行包分发的许可 |
 
-`python tools/preview_hover.py` 用合成数据预览悬停卡片，不读取真实账号或请求网络。F2/F3 切换深浅主题，F4 检查旧读数，F5/F6 切换已用/剩余，F7 切换固定状态，Esc 退出。预览窗口为方便开发检查带有标题栏；实际悬停卡片没有独立窗口按钮，也不抢占键盘焦点。
+`python tools/preview_hover.py` 用合成数据预览悬停提示，不读取真实账号或请求网络。F2/F3 切换深浅主题，F4 检查旧读数，F5/F6 切换已用/剩余，Esc 退出。预览窗口为方便开发检查带有标题栏；实际提示没有独立窗口按钮，不抢占键盘焦点，并允许点击穿透。
 
 需要在现有程序运行时构建候选版本，可使用 `./build.ps1 -OutputDirectory build/candidate`，验证后再替换正在使用的版本。
 
-`python tools/check_hover_layout.py` 使用透明测试窗口检查真实 Tk 布局，包括月总额度跨列、文字与数字间距、进度条边界和高缩放滚动。全部使用合成数据，不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
+`python tools/check_hover_layout.py` 使用透明测试窗口检查真实 Tk 布局，包括补充信息筛选、紧凑尺寸、文字与数字间距、进度条边界和高缩放尺寸限制。全部使用合成数据，不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
 
 加密文件头、凭证锁和单实例标记中的旧名称是兼容格式，不能直接替换。旧用户原地复用已有数据目录；新安装使用 TokenDuck 目录，不自动搬移或重新加密账号。
 

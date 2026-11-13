@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from hover_cards import QuotaHover, make_passive_window, reset_caption
 
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.3.5"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -1480,7 +1480,6 @@ class TokenDuck:
         self.last_refresh = None
         self.width = 120
         self._tip = None
-        self._tip_pinned = False
         self._tip_show_job = self._tip_hide_job = self._tip_refresh_job = None
         self.screen_x = 0
         self.screen_y = 0
@@ -1665,12 +1664,7 @@ class TokenDuck:
                                              ("zcode", self.zcode_data))})
 
     def on_left_click(self, _event):
-        if getattr(self, "_tip_pinned", False) and self._tip is not None and self._tip.winfo_exists():
-            self.hide_tip()
-            return
-        self.show_tip()
-        self._tip_pinned = True
-        self._tip.set_pinned(True)
+        self.hide_tip()
 
     def poll_loop(self):
         while not self.stop_event.is_set():
@@ -2066,27 +2060,13 @@ class TokenDuck:
         self._cancel_tip_job("_tip_show_job")
         if self._tip is None or not self._tip.winfo_exists():
             self._tip = None
-            self._tip_show_job = self.root.after(220, self.show_tip)
+            self._tip_show_job = self.root.after(500, self.show_tip)
 
     def schedule_tip_hide(self):
         self._cancel_tip_job("_tip_show_job")
         self._cancel_tip_job("_tip_hide_job")
         if self._tip is not None:
-            self._tip_hide_job = self.root.after(180, self._close_tip_if_outside)
-
-    def _pointer_in_hover(self):
-        x, y = self.root.winfo_pointerxy()
-        for window in (self.root, self._tip):
-            if window is not None and window.winfo_exists():
-                left, top = window.winfo_rootx(), window.winfo_rooty()
-                if left <= x < left + window.winfo_width() and top <= y < top + window.winfo_height():
-                    return True
-        return False
-
-    def _close_tip_if_outside(self):
-        self._tip_hide_job = None
-        if not getattr(self, "_tip_pinned", False) and not self._pointer_in_hover():
-            self.hide_tip()
+            self._tip_hide_job = self.root.after(120, self.hide_tip)
 
     def show_tip(self):
         self._cancel_tip_job("_tip_show_job")
@@ -2096,9 +2076,7 @@ class TokenDuck:
         anchor = (self.screen_x, self.screen_y, self.screen_x + self.width, self.screen_y + self.tb_h)
         self._tip = QuotaHover(self.root, self.hover_sections(), anchor,
                                light=_contrast_text_color(self.bg) != "#ffffff",
-                               on_enter=lambda: self._cancel_tip_job("_tip_hide_job"),
-                               on_leave=self.schedule_tip_hide, on_dismiss=self.hide_tip)
-        self._tip_pinned = False
+                               on_dismiss=self.hide_tip)
         self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
 
     def _refresh_tip(self):
@@ -2109,10 +2087,8 @@ class TokenDuck:
             self._tip_refresh_job = self.root.after(15000, self._refresh_tip)
         else:
             self._tip = None
-            self._tip_pinned = False
 
     def hide_tip(self):
-        self._tip_pinned = False
         for name in ("_tip_show_job", "_tip_hide_job", "_tip_refresh_job"):
             self._cancel_tip_job(name)
         if self._tip is not None:
@@ -2401,7 +2377,7 @@ class TokenDuck:
         messagebox.showinfo("关于 TokenDuck", "TokenDuck " + APP_VERSION +
                             "\nCodex · Kimi · ZCode 订阅额度常驻显示\n\n"
                             "本工具凭证由 Windows 当前用户加密保存在本机。\n"
-                            "悬停查看详情，左键固定或收起，右键管理和刷新。", parent=self.root)
+                            "悬停查看补充信息，移开收起；右键管理和刷新。", parent=self.root)
 
     def toggle_autostart(self):
         if self.autostart_var.get():
@@ -2574,47 +2550,38 @@ def self_check():
                 for pct, timer in zip(bar.seg_texts[1], bar.seg_timers[1]))
             bar.show_tip()
             card = bar._tip
+            report["hover_omits_taskbar_quotas"] = not card.quota_rows
+            bar.kimi_data.update({"used_ratio": 0, "amount": 1000000, "amount_left": 1000000})
+            bar.render()
             kimi_rows = [row for row in card.quota_rows if row["provider"] == "kimi"]
-            report["hover_full_quota_visible"] = len(kimi_rows) == 2 and all(
-                row["value"].cget("text") == "100%" for row in kimi_rows)
+            report["hover_full_quota_visible"] = len(kimi_rows) == 1 and kimi_rows[0]["value"].cget("text") == "100%"
             card_style = get_style(user32.GetAncestor(card.winfo_id(), 2), -20)
             report["hover_does_not_activate"] = bool(card_style & 0x08000000)
             report["hover_taskbar_icon_hidden"] = bool(card_style & 0x80) and not bool(card_style & 0x40000)
-            # Exercise updates without recreating the top-level window.
+            report["hover_click_through"] = bool(card_style & 0x20) and bool(card_style & 0x80000)
+            report["taskbar_remains_clickable"] = not bool(extended_style & 0x20)
             old_value_widgets = [row["value"] for row in card.quota_rows]
             card.update_sections(bar.hover_sections())
-            report["hover_updates_in_place"] = (card is bar._tip and
-                old_value_widgets == [row["value"] for row in card.quota_rows])
+            report["hover_updates_in_place"] = old_value_widgets == [row["value"] for row in card.quota_rows]
 
             def unexpected_refresh():
                 raise RuntimeError("离线自检不应刷新网络或反复调整层级")
 
             bar.refresh_now = bar._kick_lift = unexpected_refresh
-            bar.on_left_click(None)
-            report["left_click_pins_without_redraw"] = (bar._tip_pinned and card.pinned and
-                old_value_widgets == [row["value"] for row in card.quota_rows])
             bar.cfg["quota_display"] = "used"
             bar.render()
             report["used_display_consistent"] = (
                 all(bar.canvas.itemcget(item, "text") == "0%" for item in bar.seg_texts[1]) and
-                all(row["value"].cget("text") == "0%" and row["display_percent"] == 0
-                    for row in card.quota_rows if row["provider"] == "kimi"))
-            bar.kimi_data.update({"used_ratio": .25, "amount": 1000000, "amount_left": 750000,
-                                  "code_used_ratio": .1})
+                all(row["value"].cget("text") == "0%" for row in card.quota_rows))
+            bar.kimi_data.update({"used_ratio": .25, "amount_left": 750000, "code_used_ratio": .1})
             bar.render()
             monthly_rows = [row for row in card.quota_rows if row["provider"] == "kimi" and row["tag"] == "月"]
-            primary_rows = [row for row in card.quota_rows if row["provider"] == "kimi" and row["tag"] != "月"]
             report["monthly_quota_has_progress"] = (len(monthly_rows) == 1 and
-                monthly_rows[0]["value"].cget("text") == "25%" and
-                len(monthly_rows[0]["progress"].find_all()) == 2)
-            report["monthly_quota_spans_full_width"] = (bool(monthly_rows) and bool(primary_rows) and
-                int(monthly_rows[0]["progress"].cget("width")) >
-                int(primary_rows[0]["progress"].cget("width")) * 1.8)
+                monthly_rows[0]["value"].cget("text") == "25%" and len(monthly_rows[0]["progress"].find_all()) == 2)
+            report["monthly_quota_spans_full_width"] = bool(monthly_rows) and int(monthly_rows[0]["progress"].cget("width")) == card.inner_width
             bar.cfg["quota_display"] = "remaining"
             bar.render()
-            report["monthly_mode_switch_consistent"] = all(
-                row["value"].cget("text") == "75%" for row in card.quota_rows
-                if row["provider"] == "kimi" and row["tag"] == "月")
+            report["monthly_mode_switch_consistent"] = all(row["value"].cget("text") == "75%" for row in card.quota_rows)
             bar.zcode_data = {"windows": [
                 {"tag": "5h", "used_percent": 0, "amount": 100, "amount_left": 100},
                 {"tag": "w", "used_percent": 25, "reset_at": time.time()+7200}]}
@@ -2634,15 +2601,20 @@ def self_check():
             report["glm_stale_time_state_visible"] = bar.canvas.itemcget(time_item, "text") == "待刷新"
             report["glm_time_text_does_not_overlap"] = bar.canvas.bbox(pct_item)[2] + 2 <= bar.canvas.bbox(time_item)[0]
             bar.on_left_click(None)
-            report["left_click_closes_pinned_hover"] = bar._tip is None and not bar._tip_pinned
+            report["left_click_dismisses_hover"] = bar._tip is None
+            bar.show_tip()
+            bar.schedule_tip_hide()
+            bar.root.after(160, bar.root.quit)
+            bar.root.mainloop()
+            report["hover_auto_hides"] = bar._tip is None
         finally:
             bar.quit()
         report["ok"] = all(report[k] for k in ("user_encryption", "cross_site_redirect_blocked",
                                                "full_quota_visible", "text_does_not_overlap",
                                                "taskbar_icon_hidden", "taskbar_does_not_activate", "hover_full_quota_visible",
                                                "hover_does_not_activate", "hover_taskbar_icon_hidden",
-                                               "hover_updates_in_place", "left_click_pins_without_redraw",
-                                               "used_display_consistent", "left_click_closes_pinned_hover",
+                                               "hover_updates_in_place", "hover_omits_taskbar_quotas", "hover_click_through", "taskbar_remains_clickable",
+                                               "used_display_consistent", "left_click_dismisses_hover", "hover_auto_hides",
                                                "monthly_quota_has_progress", "monthly_quota_spans_full_width",
                                                "monthly_mode_switch_consistent", "glm_full_state_visible",
                                                "glm_unused_state_visible", "glm_rolling_state_visible",

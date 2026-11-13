@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import tokenduck as app
-from hover_cards import fit_popup, quota_layout, reset_caption
+from hover_cards import fit_popup, reset_caption, supplemental_content
 
 
 def sample_bar():
@@ -99,27 +99,25 @@ class HoverModelTests(unittest.TestCase):
         self.assertEqual(row["display_percent"], 15)
         self.assertEqual(row["detail"], "已用 1.5万 / 10万")
 
-    def test_left_click_pins_existing_hover_without_refresh_or_repeated_lifting(self):
+    def test_left_click_only_dismisses_without_refreshing_or_opening(self):
         bar = sample_bar()
-        bar._tip = Mock()
-        bar._tip_pinned = False
-        bar.show_tip, bar.hide_tip = Mock(), Mock()
-        bar.refresh_now, bar._kick_lift = Mock(), Mock()
-        bar.on_left_click(None)
-        self.assertTrue(bar._tip_pinned)
-        bar._tip.set_pinned.assert_called_once_with(True)
+        bar.hide_tip, bar.show_tip, bar.refresh_now, bar._kick_lift = Mock(), Mock(), Mock(), Mock()
         bar.on_left_click(None)
         bar.hide_tip.assert_called_once()
+        bar.show_tip.assert_not_called()
         bar.refresh_now.assert_not_called()
         bar._kick_lift.assert_not_called()
 
-    def test_pinned_hover_remains_open_when_pointer_moves_outside(self):
+    def test_brief_hover_is_cancelled_before_the_tooltip_opens(self):
         bar = sample_bar()
-        bar._tip_pinned = True
-        bar._pointer_in_hover = Mock(return_value=False)
-        bar.hide_tip = Mock()
-        bar._close_tip_if_outside()
-        bar.hide_tip.assert_not_called()
+        bar.root = Mock()
+        bar.root.after.return_value = "show-job"
+        bar._tip = None
+        bar.schedule_tip()
+        bar.root.after.assert_called_once_with(500, bar.show_tip)
+        bar.schedule_tip_hide()
+        bar.root.after_cancel.assert_called_with("show-job")
+        self.assertEqual(bar.root.after.call_count, 1)
 
     def test_provider_limit_flag_is_preserved_even_without_a_zero_percent_window(self):
         bar = sample_bar()
@@ -207,32 +205,61 @@ class HoverModelTests(unittest.TestCase):
         self.assertNotIn("synthetic-secret", encoded)
         self.assertNotIn("synthetic-account", encoded)
 
-    def test_moving_from_widget_into_popup_does_not_close_it(self):
+    def test_leaving_widget_schedules_unconditional_tooltip_dismissal(self):
         bar = sample_bar()
-        bar._pointer_in_hover = Mock(return_value=True)
-        bar.hide_tip = Mock()
-        bar._close_tip_if_outside()
-        bar.hide_tip.assert_not_called()
-        bar._pointer_in_hover.return_value = False
-        bar._close_tip_if_outside()
-        bar.hide_tip.assert_called_once()
+        bar.root = Mock()
+        bar.root.after.return_value = "hide-job"
+        tip = bar._tip = Mock()
+        bar.schedule_tip_hide()
+        bar.root.after.assert_called_once_with(120, bar.hide_tip)
+        bar.root.after.call_args.args[1]()
+        tip.destroy.assert_called_once()
+        self.assertIsNone(bar._tip)
 
 
-class QuotaLayoutTests(unittest.TestCase):
-    def test_primary_windows_are_paired_and_monthly_total_spans_both_columns(self):
-        windows = [{"tag": "5h"}, {"tag": "w"}, {"tag": "月", "full_width": True}]
-        columns, cells = quota_layout(windows)
-        self.assertEqual(columns, 2)
-        self.assertEqual([(w["tag"], row, col, span) for w, row, col, span in cells],
-                         [("5h", 0, 0, 1), ("w", 0, 1, 1), ("月", 1, 0, 2)])
+class SupplementalContentTests(unittest.TestCase):
+    def test_primary_quotas_are_omitted_and_monthly_quota_is_kept(self):
+        bar = sample_bar()
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}, {"tag": "w", "used_percent": 25}],
+                         "used_ratio": .15, "amount": 100000, "amount_left": 85000}
+        content = supplemental_content(bar.hover_sections(now=1000))
+        self.assertEqual([t["window"]["tag"] for t in content["totals"]], ["月"])
+        self.assertEqual(content["totals"][0]["window"]["display_percent"], 85)
 
-    def test_single_window_and_monthly_only_layouts_use_full_width(self):
-        for windows in ([{"tag": "月", "full_width": True}],
-                        [{"tag": "w"}, {"tag": "月", "full_width": True}]):
-            with self.subTest(windows=windows):
-                columns, cells = quota_layout(windows)
-                self.assertEqual(columns, 1)
-                self.assertTrue(all(col == 0 and span == 1 for _, _, col, span in cells))
+    def test_taskbar_percentage_changes_do_not_change_supplementary_content(self):
+        bar = sample_bar()
+        bar.data = {"plan_type": "plus", "rate_limit": {"primary_window": {"used_percent": 20, "limit_window_seconds": 18000}}}
+        before = supplemental_content(bar.hover_sections(now=1000))
+        bar.data["rate_limit"]["primary_window"]["used_percent"] = 40
+        self.assertEqual(supplemental_content(bar.hover_sections(now=1000)), before)
+
+    def test_unknown_monthly_quota_does_not_become_a_fake_meter(self):
+        bar = sample_bar()
+        bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}]}
+        content = supplemental_content(bar.hover_sections(now=1000))
+        self.assertEqual(content["totals"], [])
+        self.assertIn("暂无月总额度信息", content["facts"][0]["lines"])
+
+    def test_connection_error_and_last_success_remain_available(self):
+        bar = sample_bar()
+        bar.kimi_data = {"used_ratio": .15}
+        bar.kimi_error = "synthetic connection failure"
+        bar.last_success = {"kimi": 900}
+        content = supplemental_content(bar.hover_sections(now=1000))
+        fact = next(f for f in content["facts"] if f["id"] == "kimi")
+        self.assertTrue(fact["error"])
+        self.assertTrue(any("读取失败" in text for text in fact["lines"]))
+        self.assertTrue(any("最后成功更新" in text for text in fact["lines"]))
+
+    def test_used_mode_count_and_monthly_attribution_survive_projection(self):
+        bar = sample_bar()
+        bar.cfg = dict(app.DEFAULT_CONFIG, quota_display="used")
+        bar.kimi_data = {"used_ratio": .15, "amount": 100000, "amount_left": 85000, "code_used_ratio": .05}
+        content = supplemental_content(bar.hover_sections(now=1000))
+        window = content["totals"][0]["window"]
+        self.assertEqual(window["display_percent"], 15)
+        self.assertEqual(window["detail"], "已用 1.5万 / 10万")
+        self.assertIn("消耗月总额度的 5%", window["footnote"])
 
 
 class HoverPlacementTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 """Preview hover cards with synthetic data, without opening account files or networking.
 
-F2: dark, F3: light, F4: stale, F5: used, F6: remaining, F7: pin, Escape: close.
+F2: dark, F3: light, F4: stale, F5: used, F6: remaining, Escape: close.
 """
 
 from pathlib import Path
@@ -43,7 +43,7 @@ def main():
     root = tk.Tk()
     root.title("TokenDuck preview controls")
     root.geometry("280x110+1020+45")
-    tk.Label(root, text="示例数据 · F2 深色 / F3 浅色\nF4 旧数据 · F5 已用 / F6 剩余\nF7 固定卡片 · Esc 退出", padx=15, pady=15).pack()
+    tk.Label(root, text="示例数据 · F2 深色 / F3 浅色\nF4 旧数据 · F5 已用 / F6 剩余\nEsc 退出", padx=15, pady=15).pack()
     root.update()
     # A normal titled preview window makes the synthetic layout easy to inspect.
     # Production flyouts keep their tool-window and no-activation styles.
@@ -73,7 +73,6 @@ def main():
         tip.bind("<F4>", lambda _e: show(stale=True))
         tip.bind("<F5>", lambda _e: show(mode="used"))
         tip.bind("<F6>", lambda _e: show(mode="remaining"))
-        tip.bind("<F7>", lambda _e: tip.set_pinned(not tip.pinned))
         tip.bind("<Escape>", lambda _e: root.destroy())
         current[0] = tip
         root.update_idletasks()

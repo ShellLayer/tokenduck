@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.5 — 2026-11-13
+
+- Replaced the large provider dashboard with a compact supplementary tooltip, centered on Kimi monthly totals, plans, expiry and connection issues.
+- Removed pinning and repeated short-term quota bars from the hover view; taskbar quotas remain always visible.
+- Added a brief hover delay, automatic dismissal on leaving the taskbar widget, and click-through styling so underlying applications remain usable.
+- Reduced typical sample layout from 400×739 to 320×266 logical pixels and retained remaining/used mode, monthly progress and stale-reading metadata.
+- Updated regressions and screen-capture-free layout checks for the simplified interaction.
+
 ## 0.3.4 — 2026-11-13
 
 - Explained GLM's rolling 5-hour recovery when its API omits a precise timestamp, replacing blank taskbar time slots with full/unused, rolling, or waiting-for-refresh states.
