@@ -1,8 +1,17 @@
 # Changelog
 
+## 0.4.0 — 2026-11-14
+
+- Replaced the independent topmost quota window with a native layered child created directly inside the Windows taskbar. Raising the taskbar now raises the meter with it, without a hide-and-recover cycle.
+- Removed the production WinEvent stacking listener and 50 ms recovery poll. Native painting uses a committed GDI snapshot and double buffering; native callbacks never enter Tk/Tcl.
+- Routed background request completions through a main-thread queue. Kept the transparent Tk control engine alive when the native display is recreated after host loss.
+- Running the portable executable again opens the existing instance's account manager; automatic startup remains silent. Added startup error reporting and fatal-exit stack logging.
+- Added native parent/visibility, display recreation, UI-thread dispatch and stress checks while preserving quota parsing, account encryption, menu stability and provider colors.
+
 ## 0.3.10 — 2026-11-14
 
-- Fixed the roughly one-second disappearance after taskbar clicks: Windows raised the taskbar above the still-visible widget, which previously waited for the next one-second anchor tick.
+- This release was moved to prerelease after local abnormal exits were observed; use 0.4.0 or later.
+- Reduced the roughly one-second disappearance after taskbar clicks: Windows raised the taskbar above the still-visible widget, which previously waited for the next one-second anchor tick.
 - Added passive, conditional stacking recovery from foreground/taskbar activity, with a lightweight 50 ms fallback for silent reorders. Recovery never activates the widget, changes its geometry or fetches quotas.
 - Preserved interaction guards and the native-menu font-layout fix; event hooks and pending checks are released on exit.
 - Added native recovery timing and foreground-preservation checks, including the fallback path without activation events.

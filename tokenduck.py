@@ -15,12 +15,14 @@
 
 import base64
 import ctypes
+import faulthandler
 import getpass
 import glob
 import hashlib
 import json
 import math
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -38,9 +40,9 @@ from datetime import datetime, timedelta, timezone
 
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from subscription_menu import make_passive_window, native_menu_active, reset_caption, subscription_menu_rows
-from taskbar_window import TaskbarLayerGuard
+from native_taskbar import TaskbarCanvas, request_open_settings
 
-APP_VERSION = "0.3.10"
+APP_VERSION = "0.4.0"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -80,6 +82,7 @@ DEFAULT_CONFIG = {
 DEBUG = bool(os.environ.get("TOKENDUCK_DEBUG") or os.environ.get("CODEXBAR_DEBUG"))
 LOG_PATH = os.path.join(os.environ.get("TEMP", APP_DIR), "tokenduck_debug.log")
 _last_forced_log = 0.0
+_CRASH_STREAM = None
 
 
 def _dbg(msg, force=False):
@@ -272,7 +275,7 @@ def _quota_palette(bg):
 def detect_theme_colors(exclude_rect=None):
     """采样任务栏实际像素，返回 (背景色, 文字色, 弱化色, 进度条底色)。
 
-    exclude_rect 用于排除悬浮窗自身，避免把上次渲染结果当成任务栏颜色。
+    exclude_rect 用于排除额度区域自身，避免把上次渲染结果当成任务栏颜色。
     明确偏深/偏浅的采样支持自定义任务栏；中间亮度以系统主题稳定文字色。
     """
     colors = []
@@ -1515,14 +1518,13 @@ class TokenDuck:
         self._anchor_geometry = None
         self._font_layout_key = None
         self._render_pending = False
-        self._layer_guard = None
+        self._ui_queue = queue.SimpleQueue()
         self.screen_x = 0
         self.screen_y = 0
         self.tb_h = 48                # 最近一次探测到的任务栏高（anchor 里更新）
 
         self.root = tk.Tk()
-        if hidden:
-            self.root.withdraw()
+        self.root.withdraw()
         self.root.title("TokenDuck")
         self._account_window = None
         self._settings_window = None
@@ -1534,6 +1536,8 @@ class TokenDuck:
         self.root.overrideredirect(True)
         self.root.attributes("-toolwindow", True)
         self.root.attributes("-topmost", True)
+        self.root.attributes("-alpha", 0.0)
+        self.root.geometry("1x1+0+0")
         self.root.report_callback_exception = self._tk_exception  # 回调异常兜底
         auto_bg, auto_fg, _, _ = detect_theme_colors()
         # 默认透明背景：色键 = 采样到的任务栏色，文字抗锯齿恰好融入任务栏；
@@ -1552,7 +1556,7 @@ class TokenDuck:
                                     size=max(6, size - 1))  # 标签行
         self.seg_remains = [[], [], []]  # 各行各窗口的余量，与文字中窗口顺序一致
         self.chip_color = self._chip_color()
-        self.canvas = tk.Canvas(self.root, bg=self.bg, highlightthickness=0, bd=0)
+        self.canvas = TaskbarCanvas(self.root, bg=self.bg, transparent=self.transparent, hidden=hidden)
         self.canvas.pack(fill="both", expand=True)
         if self.transparent and self.cfg.get("chip", True):
             self.chip = self.canvas.create_polygon(
@@ -1604,6 +1608,9 @@ class TokenDuck:
             self.seg_timers.append(cd)
 
         self.canvas.bind("<ButtonRelease-3>", self.show_menu)  # 松开才弹，避免同一次点击的释放误选菜单项
+        self.canvas.bind("<<OpenSettings>>", lambda _event: self.show_account_settings())
+        self.canvas.bind("<<HostReady>>", lambda _event: self._host_ready())
+        self.canvas.bind("<<NativeError>>", lambda event: _dbg("原生绘制异常: "+str(event.x_root), force=True))
 
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.configure(disabledforeground=self.menu.cget("foreground"))
@@ -1622,6 +1629,8 @@ class TokenDuck:
         self.root.update()
         make_passive_window(self.root)
         self.render()
+        if not hidden:
+            self.root.deiconify()
 
     @staticmethod
     def _tk_exception(exc, val, tb):
@@ -1684,7 +1693,7 @@ class TokenDuck:
         finally:
             self.fetch_lock.release()
         try:
-            self.root.after(0, self.render)
+            self._post_ui(self.render)
         except RuntimeError:
             pass
 
@@ -1932,7 +1941,7 @@ class TokenDuck:
         self._font_layout_key = key
 
     def anchor(self):
-        """把窗口吸附到底部任务栏、托盘图标区左侧（置顶悬浮，定期 lift 防被被盖）。
+        """将原生额度区域布局在底部任务栏、托盘图标区左侧。
         每行 = 标签 | 分段进度条(按余量绿/黄/红) | 余量%。
         行高足够时竖排（文字上/条下）；紧凑时（如 16px/行）横排：
         条与文字同行，条宽自适应剩余空间。"""
@@ -1940,7 +1949,6 @@ class TokenDuck:
             return
         try:
             user32 = ctypes.windll.user32
-            self._safe_lift()
             shell = user32.FindWindowW("Shell_TrayWnd", None)
             if not shell:
                 return
@@ -1958,7 +1966,10 @@ class TokenDuck:
             self.tb_h = tb_h
             geometry = (self.width, tb_h, self.screen_x, rect.top)
             if geometry != getattr(self, "_anchor_geometry", None) and not self._interaction_active():
-                self.root.geometry("%dx%d+%d+%d" % geometry)
+                if hasattr(self.canvas, "set_geometry"):
+                    self.canvas.set_geometry(*geometry)
+                else:
+                    self.root.geometry("%dx%d+%d+%d" % geometry)
                 self._anchor_geometry = geometry
             if self.chip is not None:
                 self.canvas.coords(self.chip,
@@ -2053,8 +2064,13 @@ class TokenDuck:
                     else:
                         self.canvas.coords(bg_item, 0, 0, 0, 0)
                         self.canvas.coords(fg_item, 0, 0, 0, 0)
+            if hasattr(self.canvas, "commit"):
+                self.canvas.commit()
         except Exception:
-            _dbg("anchor 异常")
+            import traceback
+            _dbg("anchor 异常:\n"+traceback.format_exc(), force=True)
+            if isinstance(self.canvas, TaskbarCanvas) and not self.canvas.hwnd:
+                raise
 
     def _remain_color(self, rem, provider=0):
         palette = _quota_palette(getattr(self, "bg", "#1c1c1c"))
@@ -2069,7 +2085,7 @@ class TokenDuck:
         return _blend(self.bg, self.fg, 0.09)
 
     def _interaction_active(self):
-        """菜单、弹出选择器和可交互窗口打开时，任务栏不争抢层级。"""
+        """菜单、弹出选择器和可交互窗口打开时，延后内容与布局更新。"""
         if getattr(self, "_menu_active", False):
             return True
         try:
@@ -2082,28 +2098,33 @@ class TokenDuck:
             pass
         return native_menu_active()
 
-    def _safe_lift(self):
-        """置顶防被任务栏盖住；但菜单弹出期间不抢层级，否则会遮住菜单。"""
-        if not self._interaction_active():
-            guard = getattr(self, "_layer_guard", None)
-            if guard is not None:
-                guard.restore_if_needed()
-                return
-            try:
-                self.root.lift()
-            except Exception:
-                pass
+    def _post_ui(self, callback):
+        if not self.stop_event.is_set():
+            self._ui_queue.put(callback)
 
-    def _start_layer_guard(self):
-        if self._layer_guard is None:
-            try:
-                self._layer_guard = TaskbarLayerGuard(self.root, lambda: not self._interaction_active())
-                self._layer_guard.start()
-            except (AttributeError, OSError, tk.TclError):
-                if self._layer_guard is not None:
-                    self._layer_guard.close()
-                self._layer_guard = None
-                _dbg("任务栏层级维护未启用，保留定位检查")
+    def _host_ready(self):
+        self._anchor_geometry = None
+        self.render()
+
+    def _native_tick(self):
+        if self.stop_event.is_set():
+            return
+        try:
+            for _ in range(64):
+                try:
+                    callback = self._ui_queue.get_nowait()
+                except queue.Empty:
+                    break
+                callback()
+                if self.stop_event.is_set():
+                    return
+            self.canvas.poll_events()
+        except Exception:
+            import traceback
+            _dbg("界面队列异常:\n"+traceback.format_exc(), force=True)
+        finally:
+            if not self.stop_event.is_set():
+                self.root.after(25, self._native_tick)
 
     # ---------- 菜单 / 自启 ----------
 
@@ -2147,7 +2168,10 @@ class TokenDuck:
         try:
             self.menu.tk_popup(event.x_root, event.y_root)
         finally:
-            self.menu.grab_release()
+            try:
+                self.menu.grab_release()
+            except tk.TclError:
+                pass
 
     @staticmethod
     def autostart_enabled():
@@ -2290,7 +2314,7 @@ class TokenDuck:
                 except (RuntimeError, OSError) as e:
                     error = str(e)
                 if not self.stop_event.is_set():
-                    self.root.after(0, lambda: finish(error))
+                    self._post_ui(lambda: finish(error))
             threading.Thread(target=work, daemon=True).start()
 
         buttons = ttk.Frame(panel)
@@ -2325,7 +2349,7 @@ class TokenDuck:
             self.error = error
             self.refresh_now()
             if not self.stop_event.is_set():
-                self.root.after(0, self._update_account_status)
+                self._post_ui(self._update_account_status)
         threading.Thread(target=work, daemon=True).start()
 
     def rebind_kimi(self, allow_browser=None):
@@ -2348,8 +2372,8 @@ class TokenDuck:
                     self.last_refresh = datetime.now()
                 self._save_cache()
             if not self.stop_event.is_set():
-                self.root.after(0, self.render)
-                self.root.after(0, self._update_account_status)
+                self._post_ui(self.render)
+                self._post_ui(self._update_account_status)
         threading.Thread(target=work, daemon=True).start()
 
     def show_display_settings(self, hidden=False):
@@ -2438,12 +2462,13 @@ class TokenDuck:
 
     def quit(self):
         self.stop_event.set()
-        if self._layer_guard is not None:
-            self._layer_guard.close()
+        self.canvas.close()
+        while not self._ui_queue.empty():
+            self._ui_queue.get_nowait()
         self.root.destroy()
 
     def run(self):
-        self._start_layer_guard()
+        self.root.after(0, self._native_tick)
         threading.Thread(target=self.poll_loop, daemon=True).start()
         self.root.after(2000, self._anchor_tick)
         self.root.after(30000, self._render_tick)
@@ -2475,6 +2500,8 @@ class TokenDuck:
                 self.root.after(30000, self._render_tick)
 
     def _theme_exclude_rect(self):
+        if isinstance(self.canvas, TaskbarCanvas):
+            return self.canvas.screen_rect()
         try:
             if not self.root.winfo_ismapped():
                 return None
@@ -2529,10 +2556,10 @@ class TokenDuck:
 
 def startup_command():
     if getattr(sys, "frozen", False):
-        return [sys.executable]
+        return [sys.executable, "--background"]
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     return [pythonw if os.path.isfile(pythonw) else sys.executable,
-            os.path.join(APP_DIR, "tokenduck.py")]
+            os.path.join(APP_DIR, "tokenduck.py"), "--background"]
 
 
 def write_autostart():
@@ -2591,6 +2618,9 @@ def self_check():
             extended_style = get_style(wrapper, -20)  # GWL_EXSTYLE
             report["taskbar_icon_hidden"] = bool(extended_style & 0x80) and not bool(extended_style & 0x40000)
             report["taskbar_does_not_activate"] = bool(extended_style & 0x08000000)
+            widget_style = get_style(bar.canvas.hwnd, -16)
+            report["native_taskbar_child"] = bool(widget_style & 0x40000000) and not bool(widget_style & 0x80000000)
+            report["native_parent_is_taskbar"] = bar.canvas.u.GetAncestor(bar.canvas.hwnd, 1) == bar.canvas.u.FindWindowW("Shell_TrayWnd", None)
             bar.data = bar.zcode_data = None
             bar.error = bar.kimi_error = bar.zcode_error = None
             now = datetime.now(timezone.utc)
@@ -2700,7 +2730,16 @@ def main():
     if "--self-check" in sys.argv:
         sys.exit(0 if self_check() else 1)
     if not acquire_instance():
+        if "--background" not in sys.argv and not request_open_settings():
+            messagebox.showinfo("TokenDuck 已在运行", "程序已经启动，额度显示在任务栏。\n请在额度区域右键查看详情或管理账户。")
         return
+    global _CRASH_STREAM
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        _CRASH_STREAM = open(os.path.join(DATA_DIR, "crash.log"), "a", encoding="utf-8", buffering=1)
+        faulthandler.enable(file=_CRASH_STREAM, all_threads=True)
+    except (OSError, RuntimeError):
+        pass
     try:
         migrate_data_files()
     except (OSError, ValueError, CredentialStoreError) as e:
@@ -2743,4 +2782,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        _dbg("启动失败:\n"+traceback.format_exc(), force=True)
+        if _CRASH_STREAM is not None:
+            traceback.print_exc(file=_CRASH_STREAM)
+        if sys.stderr:
+            traceback.print_exc()
+        else:
+            messagebox.showerror("TokenDuck 启动失败", "程序未能完成启动，错误信息已记录。\n便携版无需安装，请重试或反馈此问题。")
+        sys.exit(1)

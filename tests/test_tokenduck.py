@@ -248,6 +248,7 @@ def bare_bar():
     bar.fg, bar.muted_color = "#ffffff", "#888888"
     bar._safe_lift = lambda: None
     bar._interaction_active = lambda: False
+    bar._post_ui = lambda callback: bar.root.after(0, callback)
     bar._apply_font_size = lambda: None
     return bar
 

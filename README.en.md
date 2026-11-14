@@ -18,6 +18,8 @@ TokenDuck keeps **Codex, Kimi, and GLM Coding Plan / ZCode** quotas and reset co
 
 The current UI is primarily Chinese. Tested on **Windows 11 x64**. Windows 10, other architectures, vertical taskbars and multi-monitor combinations have not been fully validated. Binaries are currently unsigned; SHA-256 checksums are provided with each release.
 
+No installer is needed. Running the executable again opens the existing instance's account manager. The meter is a native child of the taskbar and stays with it when the taskbar is raised.
+
 Right-click the taskbar widget to see subscription details, with Kimi monthly totals first, followed by plans, expiry and connection issues. The widget has no hover popup or left-click action. The same menu provides manual refresh, account, display and startup settings.
 
 The default is **remaining** allowance. Choose the **剩余额度** (remaining) or **已用额度** (used) button in **显示与刷新设置…**. Percentages, bar fill and convertible allowance counts change together. Taskbar labels contain only provider names; settings and subscription details identify the selected mode. Unused Kimi windows display `100%` remaining or `0%` used. Failed refreshes keep the last reading muted and marked `*`; low-allowance colors always reflect actual remaining capacity. Healthy bars use Codex green, Kimi blue and GLM purple, matching the illustration; colors adapt to light/dark themes, turn orange at 25% remaining and red at 10%.

@@ -17,7 +17,7 @@ python tokenduck.py --self-check
 
 离线测试使用合成账号、模拟网络与临时文件，覆盖 Kimi 零用量省略字段、有效窗口与未知状态、额度解析、缓存失效显示、账号绑定、独立续期、加密存储、原子迁移、跨进程保护、请求目标和重定向边界，以及更名后的数据与自启兼容。
 
-`TokenDuck.exe --self-check` 不读取真实账号，不访问账号接口，结果写入所选数据目录的 `self_check.json`。它验证 DPAPI 往返、跨站重定向拒绝、Kimi 满额文字、任务栏文字间距、右键详情完整性、只读菜单行、两个额度选择按钮和原生窗口工具样式。
+`TokenDuck.exe --self-check` 不读取真实账号，不访问账号接口，结果写入所选数据目录的 `self_check.json`。它验证 DPAPI 往返、跨站重定向拒绝、Kimi 满额文字、任务栏文字间距、右键详情完整性、只读菜单行、两个额度选择按钮、控制窗口工具样式和任务栏子窗口关系。
 
 `python tokenduck.py --once` 在没有其他实例时请求真实额度并打印；打包版的输出保存到数据目录下 `quota_diagnostics.json`。这属于真实账号操作，不是离线测试。日常刷新请使用现有实例的右键菜单。
 
@@ -27,22 +27,28 @@ python tokenduck.py --self-check
 | --- | --- |
 | `tokenduck.py` | 平台适配、额度请求、解析、缓存、任务栏界面与设置 |
 | `subscription_menu.py` | 订阅详情菜单、重置说明与被动窗口样式 |
-| `taskbar_window.py` | 被动层级恢复、窗口活动监听与轻量兜底检查 |
+| `native_taskbar.py` | 任务栏原生子窗口、GDI 双缓冲与显示事件队列 |
 | `secure_store.py` | 当前 Windows 用户加密的凭证存储 |
 | `codexbar.py` | 更名前源码启动命令的兼容入口 |
 | `tests/` | 离线行为与账号保护测试 |
 | `TokenDuck.spec` | PyInstaller 打包配置 |
 | `tools/collect_licenses.py` | 收集当前构建环境中随发行包分发的许可 |
 
-`subscription_menu_rows` 只接收公开额度字段并生成只读信息行。菜单每次打开时重建信息区域，操作区域保持稳定。任务栏没有鼠标进入、离开或左键动作绑定。交互保护同时检查菜单发布状态、Tk 鼠标抓取、可见子窗口与 [Windows GUI 线程菜单状态](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-guithreadinfo)，有交互时不重绘、修改字体、抬升或移动任务栏窗口，结束后合并处理待刷新的界面。字体布局按任务栏高度、字号和 Tk 缩放缓存，位置未改变时不重复设置几何信息。
+`subscription_menu_rows` 只接收公开额度字段并生成只读信息行。菜单每次打开时重建信息区域，操作区域保持稳定。任务栏没有鼠标进入、离开或左键动作绑定。交互保护同时检查菜单发布状态、Tk 鼠标抓取、可见子窗口与 Windows GUI 线程菜单状态，有交互时不重绘、修改字体或移动额度区域，结束后合并处理待刷新的界面。字体布局按任务栏高度、字号和 Tk 缩放缓存，位置未改变时不重复设置几何信息。
+
+显示层通过 `CreateWindowExW` 直接在 `Shell_TrayWnd` 下建立分层 `WS_CHILD`，随系统任务栏一起参与显示层级；没有独立浮窗的周期抬升或遮挡恢复。分层子窗口用于兼容任务栏的 DirectComposition 表面。Tk 根窗口保持透明，仅负责消息循环、菜单和设置，不跨进程重设 Tk 窗口的父级。
+
+原生窗口过程只绘制已提交的 GDI 快照或排入事件，不调用 Tk/Tcl。后台账号请求也只排入界面回调，由主线程处理。任务栏宿主消失或原生子窗口销毁时，保留 Tk 控制层并重建显示；不在测试中重启用户的 Explorer。再次启动通过本机窗口消息打开现有实例的管理窗口。`crash.log` 记录意外退出堆栈，启动错误同时给出可见提示。
 
 需要在现有程序运行时构建候选版本，可使用 `./build.ps1 -OutputDirectory build/candidate`，验证后再替换正在使用的版本。
 
-`python tools/check_menu.py` 使用合成数据和隐藏窗口检查真实 Tk 菜单，包括额度口径、正常与旧读数、只读信息行、重复打开、高缩放文字宽度、按钮选择与保存，以及透明测试对话框打开时对任务栏抬升和移动的抑制。检查不弹出菜单、不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
+`python tools/check_menu.py` 使用合成数据和隐藏窗口检查真实 Tk 菜单，包括额度口径、正常与旧读数、只读信息行、重复打开、高缩放文字宽度、按钮选择与保存，以及透明测试对话框打开时对额度位置调整的抑制。检查不弹出菜单、不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
 
 `python tools/check_popup.py` 另外短暂显示一个使用合成数据的真实 Windows 菜单，跨越定时布局与数据刷新回调，记录原生菜单尺寸事件；检测到反复缩小或重排即失败。其菜单操作均为空动作，自动关闭并恢复前台窗口，不读取账号、不捕获屏幕。此项用于覆盖仅检查隐藏控件时遗漏的真实菜单行为。
 
-`python tools/check_taskbar_layer.py` 把系统任务栏短暂抬到透明的合成窗口上方，验证三次恢复延迟及前台窗口不变；没有定时定位或额度请求参与。层级维护通过 [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) 接收窗口活动，并用 50 ms 的轻量检查覆盖不发出通知的层级变化；仅发现任务栏遮挡且没有本程序交互时，调用 [SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos) 恢复层级，指定 NOACTIVATE、NOMOVE、NOSIZE、NOOWNERZORDER。退出时注销事件并取消检查。
+`python tools/check_taskbar_embed.py` 连续八次抬升系统任务栏，核对子窗口关系和合成额度区域的一个像素，验证没有遮挡；各次抬升之间不处理 Tk 定时器，测试中没有恢复回调或额度请求。同时检查前台不变、显示子窗口销毁后的重建，以及打开设置的消息分发。布局图从程序自身模型离屏生成，不捕获屏幕。
+
+`python tools/check_native_stress.py` 用合成数据执行 1,200 次后台排队更新、30 次原生显示重建和 15 次设置窗口创建与销毁，同时在工作线程触发垃圾回收，覆盖界面线程边界与资源清理；不请求额度、不捕获屏幕。
 
 加密文件头、凭证锁和单实例标记中的旧名称是兼容格式，不能直接替换。旧用户原地复用已有数据目录；新安装使用 TokenDuck 目录，不自动搬移或重新加密账号。
 

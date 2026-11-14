@@ -18,11 +18,24 @@ class WindowInteractionTests(unittest.TestCase):
         self.native.start()
         self.addCleanup(self.native.stop)
 
-    def test_posting_menu_suppresses_all_periodic_lifts(self):
+
+    def test_menu_grabs_and_native_popups_defer_rendering(self):
         self.bar._menu_active = True
-        for _ in range(4):
-            self.bar._safe_lift()
-        self.bar.root.lift.assert_not_called()
+        self.assertTrue(self.bar._interaction_active())
+        self.bar._menu_active = False
+        self.bar.root.tk.call.return_value = ".selector.popdown"
+        self.assertTrue(self.bar._interaction_active())
+        self.bar.root.tk.call.return_value = ""
+        with patch.object(app, "native_menu_active", return_value=True):
+            self.assertTrue(self.bar._interaction_active())
+
+    def test_settings_interaction_ends_when_the_window_closes(self):
+        window = Mock(spec=app.tk.Toplevel)
+        window.state.return_value = "normal"
+        self.bar.root.winfo_children.return_value = [window]
+        self.assertTrue(self.bar._interaction_active())
+        window.state.return_value = "withdrawn"
+        self.assertFalse(self.bar._interaction_active())
 
     def test_posted_menu_blocks_font_changes_and_canvas_redraws(self):
         self.bar._menu_active = True
@@ -45,25 +58,6 @@ class WindowInteractionTests(unittest.TestCase):
         self.bar.apply_theme.assert_called_once()
         self.bar.render.assert_called_once()
 
-    def test_settings_and_child_dialogs_suppress_lifts_until_closed(self):
-        window = Mock(spec=app.tk.Toplevel)
-        window.state.return_value = "normal"
-        self.bar.root.winfo_children.return_value = [window]
-        self.bar._safe_lift()
-        self.bar.root.lift.assert_not_called()
-        window.state.return_value = "withdrawn"
-        self.bar._safe_lift()
-        self.bar.root.lift.assert_called_once()
-
-    def test_tk_popdown_grab_suppresses_lifts(self):
-        self.bar.root.tk.call.return_value = ".settings.selector.popdown"
-        self.bar._safe_lift()
-        self.bar.root.lift.assert_not_called()
-
-    def test_native_menu_suppresses_lifts_even_after_popup_call_returns(self):
-        with patch.object(app, "native_menu_active", return_value=True):
-            self.bar._safe_lift()
-        self.bar.root.lift.assert_not_called()
 
     def test_popup_guard_resets_after_error_and_prevents_reentry(self):
         self.bar._show_menu = Mock(side_effect=app.tk.TclError("closed"))
