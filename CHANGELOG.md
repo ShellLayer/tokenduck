@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 — 2026-11-14
+
+- Removed the separate rounded shading from the default taskbar appearance. Provider labels, quota text and progress bars now appear directly over the taskbar; updated the illustration to match.
+- Kept the full quota area available for right-click through a nearly invisible, passive input child beneath the color-keyed display, including gaps between glyphs and bars. Both children share taskbar placement and recreation cleanup.
+- Extended native checks to verify an unchanged blank background pixel, input targeting without shading and visibility across taskbar raises. Kept the existing menu, dialog and exact-quota checks.
+
 ## 0.4.1 — 2026-11-14
 
 - Restored GLM / ZCode 5-hour and weekly quota counts in the context menu, alongside percentages and plan details. Counts show complete values with thousands separators and follow remaining/used mode.

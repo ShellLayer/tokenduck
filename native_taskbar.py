@@ -112,10 +112,12 @@ def parent_dpi(u, parent):
 class TaskbarCanvas:
     """Small Canvas-compatible display model backed by a layered WS_CHILD window."""
 
-    def __init__(self, root, bg, transparent=True, hidden=False):
+    def __init__(self, root, bg, transparent=True, hidden=False, capture_background=False):
         self.root, self.bg, self.transparent, self.hidden = root, bg, transparent, hidden
+        self.capture_background = capture_background
         self.u, self.g, self.k = windows_api()
         self.hwnd = self.parent = None
+        self._input_hwnd = None
         self._closed = False
         self._items, self._bindings, self._fonts = {}, {}, {}
         self._snapshot, self._events = (), deque()
@@ -181,6 +183,8 @@ class TaskbarCanvas:
         if "bg" in options:
             self.bg = options["bg"]
             self._set_opacity()
+            if self._input_hwnd:
+                self.u.InvalidateRect(self._input_hwnd, None, False)
 
     def set_geometry(self, width, height, x, y):
         changed = self._geometry != (width, height, x, y)
@@ -189,11 +193,12 @@ class TaskbarCanvas:
         if changed and self.hwnd and not created:
             self._place()
 
-    def _owned_window(self):
-        if not self.hwnd or not self.u.IsWindow(self.hwnd):
+    def _owned_window(self, hwnd=None):
+        hwnd = self.hwnd if hwnd is None else hwnd
+        if not hwnd or not self.u.IsWindow(hwnd):
             return False
         pid = W.DWORD()
-        self.u.GetWindowThreadProcessId(self.hwnd, ctypes.byref(pid))
+        self.u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         return pid.value == os.getpid()
 
     def ensure_window(self, force=False):
@@ -203,30 +208,48 @@ class TaskbarCanvas:
             return False
         self._next_host_check = time.monotonic()+0.5
         shell = self.u.FindWindowW("Shell_TrayWnd", None)
-        if self._owned_window() and shell and self.u.GetAncestor(self.hwnd, 1) == shell:
+        input_ready = (not self.capture_background or
+                       (self._input_hwnd and self._owned_window(self._input_hwnd) and
+                        self.u.GetAncestor(self._input_hwnd, 1) == shell))
+        if self._owned_window() and shell and self.u.GetAncestor(self.hwnd, 1) == shell and input_ready:
             return False
-        if self._owned_window():
-            self.u.DestroyWindow(self.hwnd)
-        self.hwnd = None
+        for hwnd in (self.hwnd, self._input_hwnd):
+            if hwnd and self._owned_window(hwnd):
+                self.u.DestroyWindow(hwnd)
+        self.hwnd = self._input_hwnd = None
         if not shell:
             return False
         with parent_dpi(self.u, shell):
             # Layered children compose above the taskbar's DirectComposition surface.
+            if self.capture_background:
+                self._input_hwnd = self.u.CreateWindowExW(0x08080004, self._class_name, "TokenDuck input",
+                    0x44000000, 0, 0, 1, 1, shell, None, self._instance, None)
+                if not self._input_hwnd:
+                    raise ctypes.WinError(ctypes.get_last_error())
             self.hwnd = self.u.CreateWindowExW(0x08080004, self._class_name, "TokenDuck quotas",
                                                0x44000000, 0, 0, 1, 1, shell, None, self._instance, None)
         if not self.hwnd:
-            raise ctypes.WinError(ctypes.get_last_error())
+            error = ctypes.get_last_error()
+            if self._input_hwnd:
+                self.u.DestroyWindow(self._input_hwnd)
+            raise ctypes.WinError(error)
         self.parent = shell
         if not self.hidden:
             self.u.SetPropW(self.hwnd, MAIN_PROPERTY, 1)
         self._set_opacity()
         self._place()
+        if self._input_hwnd:
+            self.u.ShowWindow(self._input_hwnd, 4)
         self.u.ShowWindow(self.hwnd, 4)
         self.u.InvalidateRect(self.hwnd, None, False)
         self._events.append(("<<HostReady>>", 0, 0))
         return True
 
     def _set_opacity(self):
+        if self._input_hwnd and self._owned_window(self._input_hwnd):
+            # Alpha 1 retains a generous input target while blending the sampled
+            # taskbar color below visible contrast; alpha 0 would pass clicks through.
+            self.u.SetLayeredWindowAttributes(self._input_hwnd, 0, 0 if self.hidden else 1, 2)
         if self._owned_window():
             flags = 3 if self.transparent else 2
             self.u.SetLayeredWindowAttributes(self.hwnd, colorref(self.bg), 0 if self.hidden else 255, flags)
@@ -240,7 +263,9 @@ class TaskbarCanvas:
             self._width, self._height = min(width, bounds.right), min(height, bounds.bottom)
             point.x = max(0, min(point.x, bounds.right-self._width))
             point.y = max(0, min(point.y, bounds.bottom-self._height))
-            self.u.SetWindowPos(self.hwnd, 0, point.x, point.y, self._width, self._height, 0x0210)
+            for hwnd in (self._input_hwnd, self.hwnd):
+                if hwnd:
+                    self.u.SetWindowPos(hwnd, 0, point.x, point.y, self._width, self._height, 0x0210)
 
     def screen_rect(self):
         if self._owned_window():
@@ -320,11 +345,25 @@ class TaskbarCanvas:
             self.g.DeleteDC(memory)
             self.u.EndPaint(hwnd, ctypes.byref(ps))
 
+    def _paint_input(self, hwnd):
+        ps = PaintStruct()
+        dc = self.u.BeginPaint(hwnd, ctypes.byref(ps))
+        brush = self.g.CreateSolidBrush(colorref(self.bg))
+        try:
+            rectangle = W.RECT(0, 0, self._width, self._height)
+            self.u.FillRect(dc, ctypes.byref(rectangle), brush)
+        finally:
+            self.g.DeleteObject(brush)
+            self.u.EndPaint(hwnd, ctypes.byref(ps))
+
     def _window_proc(self, hwnd, message, wparam, lparam):
         # Never call Tk/Tcl here: native messages may arrive inside a Tcl operation.
         try:
             if message == 15:
-                self._paint(hwnd)
+                if hwnd == self._input_hwnd:
+                    self._paint_input(hwnd)
+                else:
+                    self._paint(hwnd)
                 return 0
             if message == 20:
                 return 1
@@ -340,6 +379,8 @@ class TaskbarCanvas:
                 return 0
             if message == 0x82 and hwnd == self.hwnd:
                 self.hwnd = None
+            if message == 0x82 and hwnd == self._input_hwnd:
+                self._input_hwnd = None
         except Exception as error:
             self._events.append(("<<NativeError>>", type(error).__name__, 0))
         return self.u.DefWindowProcW(hwnd, message, wparam, lparam)
@@ -360,7 +401,9 @@ class TaskbarCanvas:
         self._closed = True
         if self._owned_window():
             self.u.RemovePropW(self.hwnd, MAIN_PROPERTY)
-            self.u.DestroyWindow(self.hwnd)
+        for hwnd in (self.hwnd, self._input_hwnd):
+            if hwnd and self._owned_window(hwnd):
+                self.u.DestroyWindow(hwnd)
         self.u.UnregisterClassW(self._class_name, self._instance)
         for font in self._fonts.values():
             if font:

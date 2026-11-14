@@ -43,7 +43,7 @@ from secure_store import CredentialStore, CredentialStoreError, protect_bytes, u
 from subscription_menu import make_passive_window, native_menu_active, reset_caption, subscription_menu_rows
 from native_taskbar import TaskbarCanvas, request_open_settings
 
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -75,7 +75,7 @@ DEFAULT_CONFIG = {
     "quota_display": "remaining",  # remaining=剩余，used=已用；统一百分比和进度条口径
     "text_color": "",        # 留空 = 跟随系统主题自动
     "background": "",        # 留空 = 透明背景；可填 "#202020" 等变为纯色卡片
-    "chip": True,            # 透明模式下垫一层极淡圆角色块（整块可点击；false = 纯浮字）
+    "chip": False,           # 默认无底纹；旧圆角色块可由配置显式启用
     "allow_browser_import": False,  # 仅在连接窗口中主动选择后启用浏览器导入
 }
 
@@ -1568,9 +1568,10 @@ class TokenDuck:
                                     size=max(6, size - 1))  # 标签行
         self.seg_remains = [[], [], []]  # 各行各窗口的余量，与文字中窗口顺序一致
         self.chip_color = self._chip_color()
-        self.canvas = TaskbarCanvas(self.root, bg=self.bg, transparent=self.transparent, hidden=hidden)
+        self.canvas = TaskbarCanvas(self.root, bg=self.bg, transparent=self.transparent, hidden=hidden,
+                                    capture_background=self.transparent and not self.cfg.get("chip", False))
         self.canvas.pack(fill="both", expand=True)
-        if self.transparent and self.cfg.get("chip", True):
+        if self.transparent and self.cfg.get("chip", False):
             self.chip = self.canvas.create_polygon(
                 _rr_points(1, 1, 10, 10, 7), smooth=True, splinesteps=36,
                 fill=self.chip_color, outline="")
@@ -2638,6 +2639,9 @@ def self_check():
             widget_style = get_style(bar.canvas.hwnd, -16)
             report["native_taskbar_child"] = bool(widget_style & 0x40000000) and not bool(widget_style & 0x80000000)
             report["native_parent_is_taskbar"] = bar.canvas.u.GetAncestor(bar.canvas.hwnd, 1) == bar.canvas.u.FindWindowW("Shell_TrayWnd", None)
+            report["default_has_no_shading"] = bar.transparent and bar.chip is None
+            report["blank_area_context_target_present"] = bool(bar.canvas._input_hwnd and
+                bar.canvas.u.GetAncestor(bar.canvas._input_hwnd, 1) == bar.canvas.parent)
             bar.data = bar.zcode_data = None
             bar.error = bar.kimi_error = bar.zcode_error = None
             now = datetime.now(timezone.utc)

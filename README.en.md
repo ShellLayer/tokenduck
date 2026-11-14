@@ -6,6 +6,8 @@
 
 TokenDuck keeps **Codex, Kimi, and GLM Coding Plan / ZCode** quotas and reset countdowns visible together. Choose remaining or used allowance across the taskbar and context menu. No click is needed to reveal quotas. The main widget has no separate taskbar button or Alt+Tab entry.
 
+The default appearance has no separate shaded panel: only provider labels, quota text and progress bars appear over the taskbar. The quota area remains easy to right-click, including the gaps between text.
+
 ![Illustrative preview with sample values](assets/preview.svg)
 
 *Illustration with sample data; actual appearance varies with theme, scaling and settings.*
