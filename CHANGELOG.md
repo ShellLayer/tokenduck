@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — 2026-11-14
+
+- Restored GLM / ZCode 5-hour and weekly quota counts in the context menu, alongside percentages and plan details. Counts show complete values with thousands separators and follow remaining/used mode.
+- Preserved explicit monitor usage counts and derive missing remaining/used counts only from exact totals and the other count, never from rounded percentages. GLM monthly fallback counts also use full values.
+- Added exact-count regressions and packaged self-check coverage, plus a visible settings/accounts interaction check spanning timers, background updates, selection and saving. The check also exercises startup before the taskbar becomes available.
+
 ## 0.4.0 — 2026-11-14
 
 - Replaced the independent topmost quota window with a native layered child created directly inside the Windows taskbar. Raising the taskbar now raises the meter with it, without a hide-and-recover cycle.

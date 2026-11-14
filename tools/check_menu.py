@@ -30,7 +30,8 @@ def main():
                          "amount_left": 8500000, "code_used_ratio": .05, "reset_at": now+86400*21,
                          "windows": [{"tag": "5h", "used_percent": 0}, {"tag": "w", "used_percent": 0}]}
         bar.zcode_data = {"plan_name": "GLM Coding Plan · Pro", "until": now+86400*22,
-                          "windows": [{"tag": "5h", "used_percent": 24}]}
+                          "windows": [{"tag": "5h", "used_percent": 0, "amount": 12000, "amount_left": 12000},
+                                      {"tag": "w", "used_percent": 4, "amount": 60000, "amount_left": 57374}]}
         bar.last_success = {name: now-900 for name in ("codex", "kimi", "zcode")}
         for scaling, mode, stale in ((96/72, "remaining", False), (96/72, "used", False),
                                      (2.0, "remaining", True)):
@@ -43,6 +44,8 @@ def main():
             assert sum(label == "立即刷新" for label in labels) == 1
             assert sum("月总额度：" in label for label in labels) == 1
             assert any("最后成功更新" in label for label in labels) == stale
+            assert any("每周额度：" in label and ("2,626 / 60,000" if mode == "used" else
+                       "57,374 / 60,000") in label for label in labels)
             assert not bar.canvas.bind("<Enter>") and not bar.canvas.bind("<Leave>")
             assert not bar.canvas.bind("<Button-1>")
             widths = []

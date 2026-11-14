@@ -27,6 +27,8 @@ jobs:
         run: python -B tools/check_menu.py
       - name: Exercise native popup across timer ticks
         run: python -B tools/check_popup.py
+      - name: Exercise visible settings and delayed taskbar startup
+        run: python -B tools/check_dialog.py
       - name: Check embedded taskbar display without recovery timers
         run: python -B tools/check_taskbar_embed.py
       - name: Stress native display and UI dispatch

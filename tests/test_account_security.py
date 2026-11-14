@@ -316,6 +316,7 @@ class NetworkAndPackagingTests(unittest.TestCase):
         self.assertIn('""C:\\Program Files\\TokenDuck\\TokenDuck.exe""', content)
         self.assertNotIn("python", content)
         self.assertNotIn(".py", content)
+        self.assertIn('""--background""', content)
 
     def test_unknown_zcode_destination_does_not_receive_key(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(app, "ACCOUNT_STORE") as store:

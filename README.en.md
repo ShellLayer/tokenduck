@@ -26,6 +26,8 @@ The default is **remaining** allowance. Choose the **剩余额度** (remaining) 
 
 Short-term quota bars remain visible in the taskbar. Supplementary details appear as read-only rows above the actions in the right-click menu, using the current readings each time the menu opens.
 
+GLM details include exact 5-hour and weekly counts against their totals, with thousands separators. Counts follow remaining/used mode; missing counts are never estimated from rounded percentages.
+
 Kimi monthly percentages, counts and reset times follow the selected remaining/used mode. Code consumption remains an attribution within the monthly total. Failed refreshes keep the last reading and show the failure reason and last successful update in the menu. Codex expiry comes from the matching account, user and plan in the official local login snapshot, and is labeled accordingly. Missing or past snapshot dates show unknown or waiting-for-update states.
 
 GLM's 5-hour quota recovers dynamically. If the API omits the next recovery time, the taskbar shows **已满** (full), **未用** (unused in used mode), or **滚动** (rolling recovery). Stale readings without a precise time show **待刷新**. A recovery countdown is shown only when an exact timestamp is supplied.

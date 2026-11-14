@@ -405,6 +405,20 @@ class DisplayTests(unittest.TestCase):
 
 
 class CacheAndTimeTests(unittest.TestCase):
+    def test_glm_missing_count_is_derived_only_from_exact_total_and_other_count(self):
+        for detail, expected_left, expected_used in (
+                ({"usage": 12000, "currentValue": 0}, 12000, 0),
+                ({"usage": 60000, "remaining": 57374}, 57374, 2626),
+                ({"usage": 1.2, "currentValue": .3}, .9, .3),
+                ({"usage": 60000}, None, None)):
+            with self.subTest(detail=detail):
+                monitor = {"code": 200, "data": {"limits": [dict(detail, unit=3, number=5, percentage=4)]}}
+                with patch.object(app, "_zcode_api_key", return_value=("synthetic", "https://example.invalid")), \
+                     patch.object(app, "_urlopen", side_effect=[io.StringIO(json.dumps(monitor)), io.StringIO('{"data":[]}')]):
+                    windows, _, _, _ = app._fetch_zcode_monitor()
+                self.assertEqual(windows[0]["amount_left"], expected_left)
+                self.assertEqual(windows[0]["amount_used"], expected_used)
+
     def test_glm_monitor_can_omit_5h_reset_while_reporting_weekly_reset(self):
         reset = time.time()+86400
         monitor = {"code": 200, "data": {"limits": [

@@ -34,7 +34,9 @@ def main():
         "used_percent": 18, "limit_window_seconds": 18000, "reset_at": time.time()+7200}}}
     bar.kimi_data = {"level": "Moderato", "used_ratio": .15, "amount": 100000,
                      "amount_left": 85000, "windows": [{"tag": "5h", "used_percent": 0}]}
-    bar.zcode_data = {"plan_name": "Pro", "windows": [{"tag": "5h", "used_percent": 24}]}
+    bar.zcode_data = {"plan_name": "Pro", "windows": [
+        {"tag": "5h", "used_percent": 0, "amount": 12000, "amount_left": 12000},
+        {"tag": "w", "used_percent": 4, "amount": 60000, "amount_left": 57374}]}
     bar.error = bar.kimi_error = bar.zcode_error = None
     bar.render()
     bar.root.after(0, bar._native_tick)

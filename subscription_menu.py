@@ -129,6 +129,15 @@ def subscription_menu_rows(sections):
                 rows.append((_menu_label(window["footnote"]), False))
         if provider == "kimi" and windows and not months:
             rows.append(("月总额度：暂无数据", False))
+        if provider == "zcode":
+            for window in windows:
+                if window.get("tag") == "月":
+                    continue
+                line = "%s：%s" % (window["label"], window.get("detail") or
+                                     "%s %d%%" % (kind, window.get("display_percent", window["remaining"])))
+                if window.get("detail"):
+                    line += " · %d%%" % window.get("display_percent", window["remaining"])
+                rows.append((_menu_label(line), False))
         for note in section.get("notes", []):
             rows.append((_menu_label(note), False))
         if provider == "zcode" and any(w.get("tag") == "5h" and

@@ -37,12 +37,13 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from subscription_menu import make_passive_window, native_menu_active, reset_caption, subscription_menu_rows
 from native_taskbar import TaskbarCanvas, request_open_settings
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -1285,6 +1286,11 @@ def _fetch_zcode_monitor(timeout=15, credential=None):
         usage = _num(x.get("usage"))
         remaining = _num(x.get("remaining"))
         current = _num(x.get("currentValue"))
+        if usage is not None:
+            if remaining is None and current is not None:
+                remaining = float(Decimal(str(usage)) - Decimal(str(current)))
+            elif current is None and remaining is not None:
+                current = float(Decimal(str(usage)) - Decimal(str(remaining)))
         if pct is None and usage and current is not None:
             pct = round(current / usage * 100)
         if pct is None:
@@ -1293,7 +1299,7 @@ def _fetch_zcode_monitor(timeout=15, credential=None):
         if reset and reset > 1e12:      # 毫秒时间戳
             reset /= 1000.0
         wins.append({"tag": tag, "used_percent": pct, "reset_at": reset,
-                     "amount": usage, "amount_left": remaining})
+                     "amount": usage, "amount_left": remaining, "amount_used": current})
     if not wins:
         return None, None, None, None
 
@@ -1407,6 +1413,12 @@ def _fmt_amount(n):
     if abs(n) >= 10000:
         return ("%.1f" % (n / 10000.0)).rstrip("0").rstrip(".") + "万"
     return "%d" % n if n == int(n) else "%.1f" % n
+
+
+def _fmt_exact_amount(n):
+    """Keep provider quota counts readable without rounding them to 万."""
+    text = format(Decimal(str(n)), ",f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 class RECT(ctypes.Structure):
@@ -1817,7 +1829,12 @@ class TokenDuck:
                         amount, left = _num(data.get("limit")), _num(data.get("remaining"))
                 if amount is not None and amount > 0 and left is not None:
                     selected = max(0, amount - left) if mode == "used" else left
-                    row["detail"] = "%s %s / %s" % (kind, _fmt_amount(selected), _fmt_amount(amount))
+                    if provider == "zcode" and mode == "used":
+                        used = _num(win.get("amount_used"))
+                        selected = max(0, used) if used is not None else max(
+                            0, float(Decimal(str(amount)) - Decimal(str(left))))
+                    formatter = _fmt_exact_amount if provider == "zcode" else _fmt_amount
+                    row["detail"] = "%s %s / %s" % (kind, formatter(selected), formatter(amount))
                 rows.append(row)
             credits = (data.get("credits") or {}) if provider == "codex" else {}
             if credits.get("has_credits") and _num(credits.get("balance")) is not None:
@@ -2669,6 +2686,17 @@ def self_check():
             report["menu_refresh_does_not_duplicate_rows"] = sum(s.lstrip().startswith("月总额度：") for s in menu_labels()) == 1
             report["menu_actions_preserved"] = sum(bar.menu.entrycget(i, "label") == "立即刷新"
                 for i in range(bar.menu.index("end")+1) if bar.menu.type(i) == "command") == 1
+            bar.zcode_data = {"windows": [
+                {"tag": "5h", "used_percent": 0, "amount": 12000, "amount_left": 12000},
+                {"tag": "w", "used_percent": 4, "amount": 60000, "amount_left": 57374}]}
+            bar.update_menu_details()
+            report["glm_exact_remaining_counts_visible"] = all(any(text in label for label in menu_labels())
+                for text in ("12,000 / 12,000", "57,374 / 60,000"))
+            bar.cfg["quota_display"] = "used"
+            bar.update_menu_details()
+            report["glm_exact_used_counts_visible"] = all(any(text in label for label in menu_labels())
+                for text in ("已用 0 / 12,000", "已用 2,626 / 60,000"))
+            bar.cfg["quota_display"] = "remaining"
             bar.zcode_data = {"windows": [
                 {"tag": "5h", "used_percent": 0, "amount": 100, "amount_left": 100},
                 {"tag": "w", "used_percent": 25, "reset_at": time.time()+7200}]}

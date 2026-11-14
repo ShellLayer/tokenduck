@@ -209,6 +209,45 @@ class SubscriptionMenuTests(unittest.TestCase):
         bar.data["rate_limit"]["primary_window"]["used_percent"] = 40
         self.assertEqual(self.menu_text(bar), before)
 
+    def test_glm_exact_5h_and_weekly_counts_follow_both_modes(self):
+        bar = sample_bar()
+        bar.zcode_data = {"windows": [
+            {"tag": "5h", "used_percent": 0, "amount": 12000, "amount_left": 12000},
+            {"tag": "w", "used_percent": 4, "amount": 60000, "amount_left": 57374}]}
+        for mode, first, second in (("remaining", "剩余 12,000 / 12,000 · 100%", "剩余 57,374 / 60,000 · 96%"),
+                                    ("used", "已用 0 / 12,000 · 0%", "已用 2,626 / 60,000 · 4%")):
+            with self.subTest(mode=mode):
+                bar.cfg = dict(app.DEFAULT_CONFIG, quota_display=mode)
+                text = self.menu_text(bar)
+                self.assertIn("5 小时额度：" + first, text)
+                self.assertIn("每周额度：" + second, text)
+                self.assertNotIn("万", text)
+
+    def test_glm_percentage_alone_does_not_invent_counts(self):
+        bar = sample_bar()
+        bar.zcode_data = {"windows": [{"tag": "5h", "used_percent": 4, "amount": 12000}]}
+        text = self.menu_text(bar)
+        self.assertIn("5 小时额度：剩余 96%", text)
+        self.assertNotIn("11,520", text)
+        self.assertNotIn(" / 12,000", text)
+
+    def test_glm_exact_monthly_counts_and_decimal_values_are_preserved(self):
+        bar = sample_bar()
+        bar.cfg = dict(app.DEFAULT_CONFIG, quota_display="used")
+        bar.zcode_data = {"windows": [{"tag": "月", "used_percent": 20, "amount": 60000,
+                                       "amount_left": 47654.375, "amount_used": 12345.625}]}
+        self.assertIn("月总额度：已用 20% · 12,345.625 / 60,000", self.menu_text(bar))
+
+    def test_glm_cached_counts_keep_stale_status(self):
+        bar = sample_bar()
+        bar.zcode_data = {"windows": [{"tag": "w", "used_percent": 4, "amount": 60000, "amount_left": 57374}]}
+        bar.zcode_error = "synthetic connection failure"
+        bar.last_success = {"zcode": 900}
+        text = self.menu_text(bar)
+        self.assertIn("旧读数", text)
+        self.assertIn("57,374 / 60,000", text)
+        self.assertIn("最后成功更新", text)
+
     def test_unknown_monthly_quota_does_not_become_full_or_empty(self):
         bar = sample_bar()
         bar.kimi_data = {"windows": [{"tag": "5h", "used_percent": 0}]}
