@@ -27,6 +27,7 @@ python tokenduck.py --self-check
 | --- | --- |
 | `tokenduck.py` | 平台适配、额度请求、解析、缓存、任务栏界面与设置 |
 | `subscription_menu.py` | 订阅详情菜单、重置说明与被动窗口样式 |
+| `taskbar_window.py` | 被动层级恢复、窗口活动监听与轻量兜底检查 |
 | `secure_store.py` | 当前 Windows 用户加密的凭证存储 |
 | `codexbar.py` | 更名前源码启动命令的兼容入口 |
 | `tests/` | 离线行为与账号保护测试 |
@@ -40,6 +41,8 @@ python tokenduck.py --self-check
 `python tools/check_menu.py` 使用合成数据和隐藏窗口检查真实 Tk 菜单，包括额度口径、正常与旧读数、只读信息行、重复打开、高缩放文字宽度、按钮选择与保存，以及透明测试对话框打开时对任务栏抬升和移动的抑制。检查不弹出菜单、不调用屏幕捕获接口；GitHub Windows 检查会运行此项验证。
 
 `python tools/check_popup.py` 另外短暂显示一个使用合成数据的真实 Windows 菜单，跨越定时布局与数据刷新回调，记录原生菜单尺寸事件；检测到反复缩小或重排即失败。其菜单操作均为空动作，自动关闭并恢复前台窗口，不读取账号、不捕获屏幕。此项用于覆盖仅检查隐藏控件时遗漏的真实菜单行为。
+
+`python tools/check_taskbar_layer.py` 把系统任务栏短暂抬到透明的合成窗口上方，验证三次恢复延迟及前台窗口不变；没有定时定位或额度请求参与。层级维护通过 [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) 接收窗口活动，并用 50 ms 的轻量检查覆盖不发出通知的层级变化；仅发现任务栏遮挡且没有本程序交互时，调用 [SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos) 恢复层级，指定 NOACTIVATE、NOMOVE、NOSIZE、NOOWNERZORDER。退出时注销事件并取消检查。
 
 加密文件头、凭证锁和单实例标记中的旧名称是兼容格式，不能直接替换。旧用户原地复用已有数据目录；新安装使用 TokenDuck 目录，不自动搬移或重新加密账号。
 

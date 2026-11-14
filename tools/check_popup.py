@@ -37,6 +37,7 @@ def main():
     bar.zcode_data = {"plan_name": "Pro", "windows": [{"tag": "5h", "used_percent": 24}]}
     bar.error = bar.kimi_error = bar.zcode_error = None
     bar.render()
+    bar._start_layer_guard()
     for index in range(bar.menu.index("end")+1):
         if bar.menu.type(index) in ("command", "checkbutton"):
             bar.menu.entryconfigure(index, command=lambda: None)

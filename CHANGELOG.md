@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.10 — 2026-11-14
+
+- Fixed the roughly one-second disappearance after taskbar clicks: Windows raised the taskbar above the still-visible widget, which previously waited for the next one-second anchor tick.
+- Added passive, conditional stacking recovery from foreground/taskbar activity, with a lightweight 50 ms fallback for silent reorders. Recovery never activates the widget, changes its geometry or fetches quotas.
+- Preserved interaction guards and the native-menu font-layout fix; event hooks and pending checks are released on exit.
+- Added native recovery timing and foreground-preservation checks, including the fallback path without activation events.
+
 ## 0.3.9 — 2026-11-13
 
 - Fixed the reproduced native-menu flicker: periodic taskbar font changes caused the posted Windows menu to repeatedly collapse and resize. Pause all painting during interaction, cache font layout, and apply pending updates after closing.

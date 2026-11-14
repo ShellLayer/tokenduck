@@ -27,6 +27,8 @@ jobs:
         run: python -B tools/check_menu.py
       - name: Exercise native popup across timer ticks
         run: python -B tools/check_popup.py
+      - name: Check passive recovery above the taskbar
+        run: python -B tools/check_taskbar_layer.py
       - name: Build portable package
         shell: pwsh
         run: ./build.ps1

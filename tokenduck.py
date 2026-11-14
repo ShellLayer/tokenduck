@@ -38,8 +38,9 @@ from datetime import datetime, timedelta, timezone
 
 from secure_store import CredentialStore, CredentialStoreError, protect_bytes, unprotect_bytes
 from subscription_menu import make_passive_window, native_menu_active, reset_caption, subscription_menu_rows
+from taskbar_window import TaskbarLayerGuard
 
-APP_VERSION = "0.3.9"
+APP_VERSION = "0.3.10"
 RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else RESOURCE_DIR
 # 敏感数据（登录令牌）统一放 %APPDATA%，避免桌面目录被 OneDrive 等网盘同步上云
@@ -1514,6 +1515,7 @@ class TokenDuck:
         self._anchor_geometry = None
         self._font_layout_key = None
         self._render_pending = False
+        self._layer_guard = None
         self.screen_x = 0
         self.screen_y = 0
         self.tb_h = 48                # 最近一次探测到的任务栏高（anchor 里更新）
@@ -2083,10 +2085,25 @@ class TokenDuck:
     def _safe_lift(self):
         """置顶防被任务栏盖住；但菜单弹出期间不抢层级，否则会遮住菜单。"""
         if not self._interaction_active():
+            guard = getattr(self, "_layer_guard", None)
+            if guard is not None:
+                guard.restore_if_needed()
+                return
             try:
                 self.root.lift()
             except Exception:
                 pass
+
+    def _start_layer_guard(self):
+        if self._layer_guard is None:
+            try:
+                self._layer_guard = TaskbarLayerGuard(self.root, lambda: not self._interaction_active())
+                self._layer_guard.start()
+            except (AttributeError, OSError, tk.TclError):
+                if self._layer_guard is not None:
+                    self._layer_guard.close()
+                self._layer_guard = None
+                _dbg("任务栏层级维护未启用，保留定位检查")
 
     # ---------- 菜单 / 自启 ----------
 
@@ -2421,9 +2438,12 @@ class TokenDuck:
 
     def quit(self):
         self.stop_event.set()
+        if self._layer_guard is not None:
+            self._layer_guard.close()
         self.root.destroy()
 
     def run(self):
+        self._start_layer_guard()
         threading.Thread(target=self.poll_loop, daemon=True).start()
         self.root.after(2000, self._anchor_tick)
         self.root.after(30000, self._render_tick)
